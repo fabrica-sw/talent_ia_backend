@@ -1,0 +1,26 @@
+# Dependencias y artefactos de compilacion
+node_modules/
+dist/
+build/
+coverage/
+
+# Entorno y credenciales
+.env
+.env.*
+!.env.example
+!.env.template
+certs/
+
+# Logs, volcados SQL y temporales
+*.log
+*.dump
+*.sql
+!database_schema.sql
+!db/schema.sql
+.DS_Store
+Thumbs.db
+scratch/
+
+# Permitir explicitamente documentacion tecnica oficial
+!docs/
+!docs/**

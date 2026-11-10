@@ -1,0 +1,53 @@
+version: '3.8'
+
+services:
+  eas-backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: eas-recruiting-backend
+    restart: always
+    ports:
+      - '3000:3000'
+    volumes:
+      - './certs:/app/certs'
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+    networks:
+      - default
+      - atlas-net
+    env_file:
+      - .env
+    environment:
+      - PORT=3000
+      - NODE_ENV=production
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - DATABASE_URL=${DATABASE_URL:?Define DATABASE_URL en .env}
+      - JWT_SECRET=${JWT_SECRET:?Define JWT_SECRET en .env}
+      - N8N_CANDIDATE_SYNC_WEBHOOK=${N8N_CANDIDATE_SYNC_WEBHOOK:-http://10.10.10.103:5678/webhook/candidato-sync}
+      - N8N_VACANCY_SYNC_WEBHOOK=${N8N_VACANCY_SYNC_WEBHOOK:-http://10.10.10.103:5678/webhook/vacancia-sync}
+      - N8N_ENTREVISTA_WEBHOOK=${N8N_ENTREVISTA_WEBHOOK:-http://10.10.10.103:5678/webhook/candidato-entrevista}
+      - N8N_RECOVERY_EMAIL_WEBHOOK=${N8N_RECOVERY_EMAIL_WEBHOOK:-http://10.10.10.103:5678/webhook/recovery-email}
+
+  eas-frontend:
+    build:
+      context: ../talent_ia_frontend
+      dockerfile: Dockerfile
+    container_name: eas-recruiting-frontend
+    restart: always
+    ports:
+      - '8080:80'
+    depends_on:
+      - eas-backend
+    networks:
+      - default
+      - atlas-net
+
+networks:
+  default:
+  atlas-net:
+    external: true
+    name: atlas-app_default

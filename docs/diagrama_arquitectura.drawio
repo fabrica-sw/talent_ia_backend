@@ -1,0 +1,168 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="app.diagrams.net" modified="2026-11-10T10:00:00.000Z" agent="EAS Architecture Team" version="24.7.17">
+  <diagram id="talent-ia-architecture" name="Arquitectura Talent IA v2.0">
+    <mxGraphModel dx="1422" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1400" pageHeight="960" background="#ffffff" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- TITULO PRINCIPAL -->
+        <mxCell id="title" value="&lt;b&gt;TALENT IA (EAS AI RECRUITING PLATFORM) — ARQUITECTURA DESACOPLADA v2.0&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size: 11px;&quot; color=&quot;#cbd5e1&quot;&gt;EAS Consulting Group | Repositorios Independientes Frontend &amp;amp; Backend | Noviembre 2026&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#103268;strokeColor=#0d234a;fontColor=#ffffff;fontSize=15;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="40" y="20" width="1320" height="55" as="geometry" />
+        </mxCell>
+
+        <!-- CAPA 1: CLIENTES Y ROLES DE USUARIO -->
+        <mxCell id="group_clients" value="CAPA 1: CLIENTES WEB Y ROLES DE USUARIO (RBAC)" style="swimlane;whiteSpace=wrap;html=1;fillColor=#f8fafc;strokeColor=#cbd5e1;fontColor=#103268;fontSize=12;fontStyle=1;startSize=26;" vertex="1" parent="1">
+          <mxGeometry x="40" y="95" width="1320" height="105" as="geometry" />
+        </mxCell>
+
+        <mxCell id="client_admin" value="&lt;b&gt;Administrador (ADMIN)&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size: 10px;&quot; color=&quot;#475569&quot;&gt;Usuarios, RBAC, Auditoría Forense, ISO / LFPDPPP&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#103268;strokeWidth=1.5;fontColor=#1e293b;fontSize=11;" vertex="1" parent="group_clients">
+          <mxGeometry x="25" y="38" width="290" height="50" as="geometry" />
+        </mxCell>
+
+        <mxCell id="client_recruiter" value="&lt;b&gt;Reclutador (RECRUITER)&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size: 10px;&quot; color=&quot;#475569&quot;&gt;Vacantes, Carga CVs, FitScore 4D, Double-Check, Agenda&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#1d4ed8;strokeWidth=1.5;fontColor=#1e293b;fontSize=11;" vertex="1" parent="group_clients">
+          <mxGeometry x="345" y="38" width="310" height="50" as="geometry" />
+        </mxCell>
+
+        <mxCell id="client_manager" value="&lt;b&gt;Líder de Área (MANAGER)&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size: 10px;&quot; color=&quot;#475569&quot;&gt;Consulta Ternas, Scorecard Entrevistas y Aprobación&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#1d4ed8;strokeWidth=1.5;fontColor=#1e293b;fontSize=11;" vertex="1" parent="group_clients">
+          <mxGeometry x="685" y="38" width="300" height="50" as="geometry" />
+        </mxCell>
+
+        <mxCell id="client_public" value="&lt;b&gt;Aspirante Externo (Portal)&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size: 10px;&quot; color=&quot;#475569&quot;&gt;CareersPortal: Postulación Pública y Carga CV&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#047857;strokeWidth=1.5;fontColor=#1e293b;fontSize=11;" vertex="1" parent="group_clients">
+          <mxGeometry x="1015" y="38" width="280" height="50" as="geometry" />
+        </mxCell>
+
+        <!-- CAPA 2: CONTENEDOR FRONTEND -->
+        <mxCell id="group_frontend" value="CAPA 2: CONTENEDOR FRONTEND — eas-recruiting-frontend (Nginx Alpine | Puerto 8080:80)" style="swimlane;whiteSpace=wrap;html=1;fillColor=#f0f9ff;strokeColor=#0284c7;fontColor=#0369a1;fontSize=12;fontStyle=1;startSize=26;" vertex="1" parent="1">
+          <mxGeometry x="40" y="235" width="580" height="365" as="geometry" />
+        </mxCell>
+
+        <mxCell id="fe_spa" value="&lt;b&gt;Single Page Application (SPA) — Vite 6 Build&lt;/b&gt;&lt;br&gt;React 19 + TypeScript 5.8 + Tailwind CSS v4 + Recharts + Lucide&lt;br&gt;&lt;font style=&quot;font-size: 9.5px;&quot; color=&quot;#475569&quot;&gt;Multi-stage Dockerfile (node:20-slim &amp;rarr; nginx:alpine)&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#0284c7;fontColor=#1e293b;fontSize=10.5;" vertex="1" parent="group_frontend">
+          <mxGeometry x="25" y="38" width="530" height="52" as="geometry" />
+        </mxCell>
+
+        <mxCell id="fe_components" value="&lt;b&gt;Componentes Modulares UI&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size: 9.5px;&quot; color=&quot;#334155&quot;&gt;- DashboardPanel (KPIs y Gráficos)&lt;br&gt;- CandidatePanel &amp;amp; FitGauge (Expediente CV)&lt;br&gt;- VacanciesPanel (Niveles Guía Homologados)&lt;br&gt;- CalendarPanel &amp;amp; InviteModal (Entrevistas)&lt;br&gt;- AdminPanel, AuditLogPanel &amp;amp; CareersPortal&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#cbd5e1;fontColor=#1e293b;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="group_frontend">
+          <mxGeometry x="25" y="105" width="255" height="115" as="geometry" />
+        </mxCell>
+
+        <mxCell id="fe_state" value="&lt;b&gt;Contextos y Cliente HTTP (api.ts)&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size: 9.5px;&quot; color=&quot;#334155&quot;&gt;- CandidateContext &amp;amp; VacancyContext&lt;br&gt;- authFetch(): Bearer JWT automático&lt;br&gt;- Evento global 401: eas:auth_expired&lt;br&gt;- Control inactividad 15 min (InactivityModal)&lt;br&gt;- Renderizado condicionado por rol RBAC&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#cbd5e1;fontColor=#1e293b;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="group_frontend">
+          <mxGeometry x="295" y="105" width="260" height="115" as="geometry" />
+        </mxCell>
+
+        <mxCell id="fe_nginx" value="&lt;b&gt;Nginx Reverse Proxy &amp;amp; Hardening (nginx.conf)&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size: 9.5px;&quot; color=&quot;#0369a1&quot;&gt;Gzip ON | X-Frame-Options | X-Content-Type-Options | Referrer-Policy&lt;br&gt;try_files $uri $uri/ /index.html | client_max_body_size 50M&lt;br&gt;&lt;b&gt;/api/* y /auth/* &amp;rarr; proxy_pass http://eas-backend:3000&lt;/b&gt;&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e0f2fe;strokeColor=#0284c7;fontColor=#0369a1;fontSize=10;" vertex="1" parent="group_frontend">
+          <mxGeometry x="25" y="235" width="530" height="70" as="geometry" />
+        </mxCell>
+
+        <mxCell id="fe_repo" value="&lt;b&gt;Repo GitHub Frontend:&lt;/b&gt; https://github.com/eaguilarh01/talent_ia_frontend.git" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eff6ff;strokeColor=#93c5fd;fontColor=#1e3a8a;fontSize=10;" vertex="1" parent="group_frontend">
+          <mxGeometry x="25" y="318" width="530" height="30" as="geometry" />
+        </mxCell>
+
+        <!-- CAPA 3: CONTENEDOR BACKEND -->
+        <mxCell id="group_backend" value="CAPA 3: CONTENEDOR BACKEND — eas-recruiting-backend (Node.js 20 LTS + Express 4 | Puerto 3000:3000)" style="swimlane;whiteSpace=wrap;html=1;fillColor=#f8fafc;strokeColor=#103268;fontColor=#103268;fontSize=12;fontStyle=1;startSize=26;" vertex="1" parent="1">
+          <mxGeometry x="690" y="235" width="670" height="365" as="geometry" />
+        </mxCell>
+
+        <mxCell id="be_api" value="&lt;b&gt;API REST Express 4 (server.ts &amp;rarr; dist/server.cjs via build-server.js esbuild)&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size: 9.5px;&quot; color=&quot;#475569&quot;&gt;Multer Memory Upload (PDF/DOCX/TXT) | Sanitización UTF-8 | Validación Zod | Rate Limiting&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#103268;fontColor=#1e293b;fontSize=10.5;" vertex="1" parent="group_backend">
+          <mxGeometry x="25" y="38" width="620" height="48" as="geometry" />
+        </mxCell>
+
+        <mxCell id="be_auth" value="&lt;b&gt;Seguridad JWT, RBAC &amp;amp; PIN&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size: 9.5px;&quot; color=&quot;#334155&quot;&gt;- auth.ts: JWT HS256 (8h) + bcryptjs (costo 12)&lt;br&gt;- Lockout anti-fuerza bruta y reset PIN&lt;br&gt;- Lista blanca PUBLIC_API_ROUTES&lt;br&gt;- Cuentas bootstrap solo vía .env&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#cbd5e1;fontColor=#1e293b;fontSize=10;align=left;spacingLeft=8;" vertex="1" parent="group_backend">
+          <mxGeometry x="25" y="96" width="295" height="90" as="geometry" />
+        </mxCell>
+
+        <mxCell id="be_audit" value="&lt;b&gt;Motores IA Multimodales &amp;amp; n8n&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size: 9.5px;&quot; color=&quot;#334155&quot;&gt;- Conectores: Gemini / OpenAI / Anthropic Claude&lt;br&gt;- Parsing PDF (pdf-parse) y DOCX (mammoth)&lt;br&gt;- Webhooks n8n: Sync, Agenda y Recovery PIN&lt;br&gt;- auditLogger.ts: Bitácora LFPDPPP inmutable&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#cbd5e1;fontColor=#1e293b;fontSize=10;align=left;spacingLeft=8;" vertex="1" parent="group_backend">
+          <mxGeometry x="340" y="96" width="305" height="90" as="geometry" />
+        </mxCell>
+
+        <mxCell id="be_engines" value="&lt;b&gt;Motores Heurísticos Deterministas de Evaluación&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size: 9.5px;&quot; color=&quot;#334155&quot;&gt;&lt;b&gt;vacancyUtils.ts:&lt;/b&gt; FitScore 4D (Dominio 40%, Seniority 30%, Requisitos 20%, Inglés 10%) | 6 Niveles Guía Homologados&lt;br&gt;&lt;b&gt;canonicalCvNormalizer.ts &amp;amp; textRepair.ts:&lt;/b&gt; Purga de mojibake UTF-8, ruido de paginación y reubicación de verbos&lt;br&gt;&lt;b&gt;questionEngine.ts &amp;amp; doubleCheckEvaluator.ts:&lt;/b&gt; 7 reactivos situacionales por brecha real, rúbrica STAR y speech&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eff6ff;strokeColor=#1d4ed8;fontColor=#1e293b;fontSize=9.5;align=left;spacingLeft=10;" vertex="1" parent="group_backend">
+          <mxGeometry x="25" y="196" width="620" height="74" as="geometry" />
+        </mxCell>
+
+        <mxCell id="be_pool" value="&lt;b&gt;Driver PostgreSQL pg.Pool (Consultas 100% Parametrizadas y Transacciones SQL)&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#103268;strokeColor=#0d234a;fontColor=#ffffff;fontSize=10;" vertex="1" parent="group_backend">
+          <mxGeometry x="25" y="280" width="620" height="28" as="geometry" />
+        </mxCell>
+
+        <mxCell id="be_repo" value="&lt;b&gt;Repo GitHub Backend:&lt;/b&gt; https://github.com/eaguilarh01/talent_ia_backend.git" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eff6ff;strokeColor=#93c5fd;fontColor=#1e3a8a;fontSize=10;" vertex="1" parent="group_backend">
+          <mxGeometry x="25" y="318" width="620" height="30" as="geometry" />
+        </mxCell>
+
+        <!-- CAPA 4: PERSISTENCIA POSTGRESQL + SERVICIO N8N -->
+        <mxCell id="group_database" value="CAPA 4: PERSISTENCIA RELACIONAL (PostgreSQL 16 en Red Docker atlas-net | Puerto 5432)" style="swimlane;whiteSpace=wrap;html=1;fillColor=#f0fdf4;strokeColor=#16a34a;fontColor=#15803d;fontSize=12;fontStyle=1;startSize=26;" vertex="1" parent="1">
+          <mxGeometry x="40" y="655" width="940" height="190" as="geometry" />
+        </mxCell>
+
+        <mxCell id="db_auth" value="&lt;b&gt;Tabla: auth_users &amp;amp; app_users&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size: 9px;&quot; color=&quot;#334155&quot;&gt;UUID, email UNIQUE, password_hash bcrypt, reset_code, rol RBAC, activo, primer_login, trigger sync&lt;/font&gt;" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=10;fillColor=#ffffff;strokeColor=#16a34a;fontColor=#1e293b;fontSize=9.5;" vertex="1" parent="group_database">
+          <mxGeometry x="25" y="42" width="280" height="72" as="geometry" />
+        </mxCell>
+
+        <mxCell id="db_candidates" value="&lt;b&gt;Tabla: candidates&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size: 9px;&quot; color=&quot;#334155&quot;&gt;UUID, datos personales, CV raw, competencies JSONB, fit_score, double_check_report, interview_speech, stage&lt;/font&gt;" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=10;fillColor=#ffffff;strokeColor=#16a34a;fontColor=#1e293b;fontSize=9.5;" vertex="1" parent="group_database">
+          <mxGeometry x="330" y="42" width="280" height="72" as="geometry" />
+        </mxCell>
+
+        <mxCell id="db_vacancies" value="&lt;b&gt;Tabla: vacancies&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size: 9px;&quot; color=&quot;#334155&quot;&gt;ID, título, departamento, rango salarial, requirements, min_competencies JSONB, nivel inglés, modalidad&lt;/font&gt;" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=10;fillColor=#ffffff;strokeColor=#16a34a;fontColor=#1e293b;fontSize=9.5;" vertex="1" parent="group_database">
+          <mxGeometry x="635" y="42" width="280" height="72" as="geometry" />
+        </mxCell>
+
+        <mxCell id="db_audit" value="&lt;b&gt;Tabla: log_auditoria (Inmutable)&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size: 9px;&quot; color=&quot;#334155&quot;&gt;usuario_id, usuario_email, ip_address, accion, modulo, nivel (INFO/WARN/ERROR/CRITICAL), detalles JSONB, fecha DESC&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#16a34a;fontColor=#1e293b;fontSize=9.5;" vertex="1" parent="group_database">
+          <mxGeometry x="25" y="128" width="585" height="46" as="geometry" />
+        </mxCell>
+
+        <mxCell id="db_indexes" value="&lt;b&gt;Índices &amp;amp; Extensiones:&lt;/b&gt;&lt;br&gt;pgcrypto | idx_auth_users_email | idx_app_users_rol | idx_log_auditoria_fecha" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#16a34a;fontColor=#15803d;fontSize=9;" vertex="1" parent="group_database">
+          <mxGeometry x="635" y="128" width="280" height="46" as="geometry" />
+        </mxCell>
+
+        <!-- SERVIDOR EXTERNO N8N -->
+        <mxCell id="group_n8n" value="AUTOMATIZACIÓN n8n (10.10.10.103:5678)" style="swimlane;whiteSpace=wrap;html=1;fillColor=#fffbeb;strokeColor=#d97706;fontColor=#92400e;fontSize=12;fontStyle=1;startSize=26;" vertex="1" parent="1">
+          <mxGeometry x="1010" y="655" width="350" height="190" as="geometry" />
+        </mxCell>
+
+        <mxCell id="n8n_workflows" value="&lt;b&gt;n8n_workflow_eas_recruiting_master.json&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size: 9.5px;&quot; color=&quot;#334155&quot;&gt;- /webhook/candidato-sync&lt;br&gt;- /webhook/vacancia-sync&lt;br&gt;- /webhook/candidato-entrevista&lt;br&gt;- /webhook/recovery-email (SMTP PIN OTP)&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d97706;fontColor=#1e293b;fontSize=9.5;align=left;spacingLeft=10;" vertex="1" parent="group_n8n">
+          <mxGeometry x="20" y="45" width="310" height="125" as="geometry" />
+        </mxCell>
+
+        <!-- CONECTORES DIRIGIDOS -->
+        <mxCell id="edge_clients_fe" value="HTTPS / HTTP :8080" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#0284c7;strokeWidth=2;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="client_recruiter" target="fe_spa">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="540" y="218" />
+              <mxPoint x="330" y="218" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="edge_fe_be" value="Red Docker atlas-net&#xa;Proxy /api/* &amp;rarr; eas-backend:3000" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#1d4ed8;strokeWidth=2.5;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fe_nginx" target="be_api">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="655" y="505" />
+              <mxPoint x="655" y="297" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="edge_be_db" value="Red Docker atlas-net | TCP 5432 (pg.Pool SQL Parametrizado)" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#16a34a;strokeWidth=2.5;exitX=0.3;exitY=1;exitDx=0;exitDy=0;entryX=0.75;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="be_pool" target="group_database">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="901" y="625" />
+              <mxPoint x="745" y="625" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="edge_be_n8n" value="HTTP POST Webhooks n8n" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#d97706;strokeWidth=2;exitX=0.8;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="be_pool" target="group_n8n">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1211" y="625" />
+              <mxPoint x="1185" y="625" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- PIE DE PAGINA -->
+        <mxCell id="footer" value="EAS Consulting Group | Arquitectura Oficial Talent IA v2.0 | Repositorios: eaguilarh01/talent_ia_frontend &amp; eaguilarh01/talent_ia_backend | Compatible Draw.io / Diagrams.net" style="text;html=1;align=center;verticalAlign=middle;resizable=0;points=[];autosize=1;strokeColor=none;fillColor=none;fontSize=10;fontColor=#64748b;" vertex="1" parent="1">
+          <mxGeometry x="255" y="875" width="890" height="25" as="geometry" />
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

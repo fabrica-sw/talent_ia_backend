@@ -1,0 +1,415 @@
+{
+  "name": "EAS AI Recruiting - Suite Completa de Automatización y Sincronización",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "candidato-sync",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "name": "Webhook Candidato Sync",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        100,
+        250
+      ],
+      "id": "node-webhook-candidato",
+      "webhookId": "candidato-sync-wh-id-001"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "vacancia-sync",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "name": "Webhook Vacancia Sync",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        100,
+        550
+      ],
+      "id": "node-webhook-vacancia",
+      "webhookId": "vacancia-sync-wh-id-002"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "candidato-entrevista",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "name": "Webhook Agenda Entrevista",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        100,
+        800
+      ],
+      "id": "node-webhook-entrevista",
+      "webhookId": "candidato-entrevista-wh-id-003"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "recovery-email",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "name": "Webhook Recovery Email",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        100,
+        1050
+      ],
+      "id": "node-webhook-recovery",
+      "webhookId": "recovery-email-wh-id-004"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.body?.event || $json.event || 'SCREENING_COMPLETED' }}",
+              "value2": "SCREENING_COMPLETED"
+            }
+          ]
+        }
+      },
+      "name": "Es Screening Completado?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        320,
+        250
+      ],
+      "id": "node-if-screening"
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $json.body?.body || $json.body || $json;\n\nconst resumeText = raw.resumeText || raw.resume_text || '';\nconst resumeLower = resumeText.toLowerCase();\n\n// 1. Extracción de Educación\nlet educacion = raw.education || [];\nif (!educacion.length) {\n  let nivel = 'Licenciatura / Ingeniería';\n  if (/maestria|master|posgrado/.test(resumeLower)) nivel = 'Maestría / Posgrado';\n  else if (/tecnico|carrera tecnica|diplomado/.test(resumeLower)) nivel = 'Técnico Especializado';\n  educacion = [{ grado: nivel, estado: 'Completado' }];\n}\n\n// 2. Extracción de Últimos 3 Empleos y Permanencia\nlet ultimos3 = raw.last_3_jobs || [];\nlet avgTenure = raw.avg_tenure || 2.5;\n\nlet fitScoreBase = raw.fitScore || raw.fit_score || 75;\nlet stabilityScore = avgTenure >= 3.0 ? 95 : (avgTenure >= 2.0 ? 85 : 70);\nlet compositeFitScore = Math.round((fitScoreBase * 0.70) + (stabilityScore * 0.30));\n\nreturn {\n  json: {\n    id: raw.id || 'cand_' + Date.now(),\n    name: raw.name || '',\n    email: raw.email || '',\n    phone: raw.phone || '',\n    resume_text: resumeText,\n    stage: raw.stage || 'Filtrado',\n    competencies: JSON.stringify({\n      tech_skills: raw.competencies || {},\n      last_3_jobs: ultimos3,\n      education: educacion,\n      stability_score: stabilityScore,\n      avg_tenure_years: avgTenure\n    }),\n    fit_score: compositeFitScore,\n    summary: raw.summary || ('Candidato con formación ' + (educacion[0]?.grado || 'Profesional') + ' y permanencia promedio de ' + avgTenure + ' años en últimos empleos.'),\n    strengths: raw.strengths || [],\n    growths: raw.growths || [],\n    recommended_questions: raw.recommendedQuestions || raw.recommended_questions || [],\n    suggested_time: raw.suggestedTime || raw.suggested_time || null,\n    channel: raw.channel || 'Postulación Web',\n    vacancy_id: raw.vacancyId || raw.vacancy_id || null,\n    double_check_report: raw.doubleCheckReport || raw.double_check_report || null,\n    interview_speech: raw.interviewSpeech || raw.interview_speech || null,\n    comments: raw.comments || ''\n  }\n};"
+      },
+      "name": "Formatear Candidato DB",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        250
+      ],
+      "id": "node-fmt-candidato"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO candidates (id, name, email, phone, resume_text, stage, competencies, fit_score, summary, strengths, growths, recommended_questions, suggested_time, channel, vacancy_id, double_check_report, interview_speech, comments)\nVALUES (\n  $1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18\n)\nON CONFLICT (id) DO UPDATE SET\n  name = EXCLUDED.name,\n  email = EXCLUDED.email,\n  stage = EXCLUDED.stage,\n  fit_score = EXCLUDED.fit_score,\n  double_check_report = EXCLUDED.double_check_report,\n  interview_speech = EXCLUDED.interview_speech,\n  comments = EXCLUDED.comments;",
+        "additionalFields": {
+          "queryParams": "id, name, email, phone, resume_text, stage, competencies, fit_score, summary, strengths, growths, recommended_questions, suggested_time, channel, vacancy_id, double_check_report, interview_speech, comments"
+        }
+      },
+      "name": "PostgreSQL Upsert Candidato",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        720,
+        250
+      ],
+      "id": "node-db-candidato",
+      "credentials": {
+        "postgres": {
+          "id": "eas-postgres-cred-001",
+          "name": "PostgreSQL EAS DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $json.body?.body || $json.body || $json;\nreturn {\n  json: {\n    id: raw.id || 'vac_' + Date.now(),\n    title: raw.title || '',\n    department: raw.department || 'Consultoría',\n    location: raw.location || 'CDMX / Remoto',\n    description: raw.description || '',\n    requirements: raw.requirements || [],\n    experience_years: raw.experienceYears || raw.experience_years || 3,\n    salary_range: raw.salaryRange || raw.salary_range || 'A convenir',\n    status: raw.status || 'Activa',\n    min_competencies: JSON.stringify(raw.minCompetenciesRequired || raw.min_competencies || {}),\n    english_level: raw.englishLevel || raw.english_level || 'Medio',\n    modalidad: raw.modalidad || 'Híbrido'\n  }\n};"
+      },
+      "name": "Formatear Vacancia DB",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        320,
+        550
+      ],
+      "id": "node-fmt-vacancia"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO vacancies (id, title, department, location, description, requirements, experience_years, salary_range, status, min_competencies, english_level, modalidad)\nVALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12)\nON CONFLICT (id) DO UPDATE SET\n  title = EXCLUDED.title,\n  description = EXCLUDED.description,\n  status = EXCLUDED.status;",
+        "additionalFields": {
+          "queryParams": "id, title, department, location, description, requirements, experience_years, salary_range, status, min_competencies, english_level, modalidad"
+        }
+      },
+      "name": "PostgreSQL Upsert Vacancia",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        520,
+        550
+      ],
+      "id": "node-db-vacancia",
+      "credentials": {
+        "postgres": {
+          "id": "eas-postgres-cred-001",
+          "name": "PostgreSQL EAS DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $json.body?.body || $json.body || $json;\nconst meetingLink = raw.meetingLink || raw.meeting_link || 'https://meet.google.com/eas-recruiting';\nconst candidateName = raw.candidateName || raw.candidate_name || 'Candidato';\nconst date = raw.date || new Date().toISOString();\nconst candidateEmail = raw.candidateEmail || raw.candidate_email || '';\n\nreturn {\n  json: {\n    status: \"success\",\n    message: \"Entrevista agendada exitosamente en el calendario EAS\",\n    candidateName: candidateName,\n    candidateEmail: candidateEmail,\n    date: date,\n    meetingLink: meetingLink,\n    comments: \"Reunión agendada vía n8n: \" + meetingLink\n  }\n};"
+      },
+      "name": "Formatear Invitación Entrevista",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        320,
+        800
+      ],
+      "id": "node-fmt-entrevista"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE candidates SET stage = 'Entrevista Capital Humano', suggested_time = $1, comments = $2 WHERE email = $3 OR name = $4;",
+        "additionalFields": {
+          "queryParams": "date, comments, candidateEmail, candidateName"
+        }
+      },
+      "name": "Actualizar Estado Candidato a Entrevista",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        520,
+        800
+      ],
+      "id": "node-db-entrevista-update",
+      "credentials": {
+        "postgres": {
+          "id": "eas-postgres-cred-001",
+          "name": "PostgreSQL EAS DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "allIncomingItems",
+        "options": {}
+      },
+      "name": "Respuesta Webhook Sync",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        950,
+        400
+      ],
+      "id": "node-response-sync"
+    },
+    {
+      "parameters": {
+        "functionCode": "const raw = $json.body?.body || $json.body || $json;\nconst pin = raw.pin || raw.reset_code || raw.code || '123456';\nconst email = raw.email || 'usuario@easconsulting.com.mx';\n\nconst subject = \"PIN de Recuperación de Contraseña — EAS AI Recruiting\";\nconst bodyText = `Hola,\\n\\nHas solicitado restablecer tu contraseña en la plataforma EAS AI Recruiting.\\n\\nTu PIN de seguridad para restablecer tu acceso es: ${pin}\\n\\nEste PIN es de uso único y caduca en 30 minutos.\\nSi no solicitaste este cambio, puedes ignorar este mensaje de forma segura.`;\n\nconst bodyHtml = `\n<div style=\"font-family: Arial, sans-serif; padding: 25px; color: #1e293b; max-width: 520px; margin: auto; border: 1.5px solid #cbd5e1; border-radius: 12px; background-color: #ffffff; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);\">\n  <div style=\"text-align: center; margin-bottom: 20px;\">\n    <h2 style=\"color: #1e3a8a; margin: 0; font-size: 22px; font-weight: 700;\">EAS AI Recruiting</h2>\n    <p style=\"color: #64748b; font-size: 13px; margin-top: 4px;\">Sistema Corporativo de Reclutamiento & Selección</p>\n  </div>\n  <hr style=\"border: 0; border-top: 1px solid #e2e8f0; margin: 15px 0;\" />\n  <p style=\"font-size: 14px; line-height: 1.6; color: #334155;\">Hola,</p>\n  <p style=\"font-size: 14px; line-height: 1.6; color: #334155;\">Has solicitado restablecer tu contraseña en la plataforma. Utiliza el siguiente PIN de seguridad de 6 dígitos para completar el proceso:</p>\n  <div style=\"background-color: #f1f5f9; text-align: center; padding: 18px; border-radius: 10px; margin: 24px 0; border: 1px solid #e2e8f0;\">\n    <span style=\"font-size: 34px; font-weight: 800; letter-spacing: 8px; color: #2563eb; font-family: monospace;\">${pin}</span>\n  </div>\n  <p style=\"font-size: 13px; color: #64748b; line-height: 1.5;\">Este PIN es de uso único y caduca en <strong>30 minutos</strong>. Si no solicitaste este cambio de contraseña, puedes ignorar este mensaje de forma segura.</p>\n  <hr style=\"border: 0; border-top: 1px solid #e2e8f0; margin: 20px 0 15px;\" />\n  <p style=\"font-size: 11px; color: #94a3b8; text-align: center; margin: 0;\">EAS Consulting &copy; 2026 — Soporte TI (it@easconsulting.com.mx)</p>\n</div>\n`;\n\nreturn [\n  {\n    json: {\n      status: 'success',\n      message: 'Notificación de PIN de recuperación enviada exitosamente vía n8n',\n      email: email,\n      pin: pin,\n      subject: subject,\n      bodyText: bodyText,\n      bodyHtml: bodyHtml,\n      timestamp: new Date().toISOString()\n    }\n  }\n];"
+      },
+      "name": "Formatear Correo PIN Recovery",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        350,
+        1050
+      ],
+      "id": "node-fmt-recovery"
+    },
+    {
+      "parameters": {
+        "respondWith": "allIncomingItems",
+        "options": {}
+      },
+      "name": "Respuesta Webhook Recovery",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        800,
+        1050
+      ],
+      "id": "node-response-recovery"
+    },
+    {
+      "parameters": {
+        "fromEmail": "it@easconsulting.com.mx",
+        "toEmail": "={{ $json.email }}",
+        "subject": "={{ $json.subject }}",
+        "emailFormat": "both",
+        "text": "={{ $json.bodyText }}",
+        "html": "={{ $json.bodyHtml }}",
+        "options": {}
+      },
+      "name": "Enviar Correo PIN (SMTP)",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2,
+      "position": [
+        550,
+        1050
+      ],
+      "id": "node-email-send-pin",
+      "credentials": {
+        "smtp": {
+          "id": "eas-smtp-cred-001",
+          "name": "SMTP EAS Consulting"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook Candidato Sync": {
+      "main": [
+        [
+          {
+            "node": "Es Screening Completado?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Es Screening Completado?": {
+      "main": [
+        [
+          {
+            "node": "Formatear Candidato DB",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Formatear Candidato DB": {
+      "main": [
+        [
+          {
+            "node": "PostgreSQL Upsert Candidato",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PostgreSQL Upsert Candidato": {
+      "main": [
+        [
+          {
+            "node": "Respuesta Webhook Sync",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook Vacancia Sync": {
+      "main": [
+        [
+          {
+            "node": "Formatear Vacancia DB",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Formatear Vacancia DB": {
+      "main": [
+        [
+          {
+            "node": "PostgreSQL Upsert Vacancia",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PostgreSQL Upsert Vacancia": {
+      "main": [
+        [
+          {
+            "node": "Respuesta Webhook Sync",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook Agenda Entrevista": {
+      "main": [
+        [
+          {
+            "node": "Formatear Invitación Entrevista",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Formatear Invitación Entrevista": {
+      "main": [
+        [
+          {
+            "node": "Actualizar Estado Candidato a Entrevista",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Actualizar Estado Candidato a Entrevista": {
+      "main": [
+        [
+          {
+            "node": "Respuesta Webhook Sync",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook Recovery Email": {
+      "main": [
+        [
+          {
+            "node": "Formatear Correo PIN Recovery",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Formatear Correo PIN Recovery": {
+      "main": [
+        [
+          {
+            "node": "Enviar Correo PIN (SMTP)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enviar Correo PIN (SMTP)": {
+      "main": [
+        [
+          {
+            "node": "Respuesta Webhook Recovery",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
