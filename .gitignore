@@ -24,3 +24,4 @@ scratch/
 # Permitir explicitamente documentacion tecnica oficial
 !docs/
 !docs/**
+

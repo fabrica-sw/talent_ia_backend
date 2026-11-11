@@ -51,3 +51,4 @@ networks:
   atlas-net:
     external: true
     name: atlas-app_default
+
