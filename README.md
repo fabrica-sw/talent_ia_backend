@@ -19,6 +19,8 @@ Servicio central RESTful en Node.js 20 LTS y Express 4 para la plataforma **Tale
   - [`docs/MANUAL_OPERATIVO_RECLUTADOR.pdf`](docs/MANUAL_OPERATIVO_RECLUTADOR.pdf) (Rol `RECRUITER`)
   - [`docs/MANUAL_OPERATIVO_MANAGER.pdf`](docs/MANUAL_OPERATIVO_MANAGER.pdf) (Rol `MANAGER`)
 - **Diagrama de Arquitectura Editable (Draw.io):** [`docs/diagrama_arquitectura.drawio`](docs/diagrama_arquitectura.drawio)
+- **Diagrama del Proyecto End-to-End (Draw.io):** [`docs/diagrama_proyecto.drawio`](docs/diagrama_proyecto.drawio)
+- **Documentación para DevOps (PDF):** [`docs/DOCUMENTACION_DEVOPS.pdf`](docs/DOCUMENTACION_DEVOPS.pdf) ([Fuente Markdown](docs/DOCUMENTACION_DEVOPS.md))
 
 ---
 
@@ -65,3 +67,4 @@ docker compose up -d --build
 # Verificación de salud
 curl -sI http://localhost:3000/api/health
 ```
+

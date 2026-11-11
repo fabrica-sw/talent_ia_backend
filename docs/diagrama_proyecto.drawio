@@ -1,0 +1,111 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="app.diagrams.net" modified="2026-11-10T18:50:00.000Z" agent="EAS Architecture Team" version="24.7.17">
+  <diagram id="talent-ia-project-flow" name="Diagrama del Proyecto Talent IA">
+    <mxGraphModel dx="1422" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1420" pageHeight="920" background="#ffffff" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- ENCABEZADO -->
+        <mxCell id="hdr" value="&lt;b&gt;DIAGRAMA DEL PROYECTO: TALENT IA (FLUJO FUNCIONAL END-TO-END DE RECLUTAMIENTO INTELIGENTE)&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size: 11px;&quot; color=&quot;#cbd5e1&quot;&gt;EAS Consulting Group | Ciclo Completo: Atracción, Parsing Curricular, Scoring 4D, Double-Check, Agendamiento y Auditoría&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#103268;strokeColor=#0d234a;fontColor=#ffffff;fontSize=15;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="40" y="20" width="1340" height="55" as="geometry" />
+        </mxCell>
+
+        <!-- ETAPA 1: ATRACCION E INGESTA -->
+        <mxCell id="lane1" value="1. ATRACCIÓN E INGESTA" style="swimlane;whiteSpace=wrap;html=1;fillColor=#f8fafc;strokeColor=#cbd5e1;fontColor=#103268;fontSize=11;fontStyle=1;startSize=26;" vertex="1" parent="1">
+          <mxGeometry x="40" y="95" width="230" height="440" as="geometry" />
+        </mxCell>
+        <mxCell id="p1_vac" value="&lt;b&gt;Alta de Vacante&lt;/b&gt;&lt;br&gt;VacanciesPanel.tsx&lt;br&gt;&lt;font style=&quot;font-size: 9px;&quot; color=&quot;#475569&quot;&gt;6 Niveles Guía Homologados&lt;br&gt;Requisitos, Salario, Inglés&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#1d4ed8;fontColor=#1e293b;fontSize=10;" vertex="1" parent="lane1">
+          <mxGeometry x="15" y="45" width="200" height="75" as="geometry" />
+        </mxCell>
+        <mxCell id="p1_portal" value="&lt;b&gt;Portal Público&lt;/b&gt;&lt;br&gt;CareersPortal.tsx&lt;br&gt;&lt;font style=&quot;font-size: 9px;&quot; color=&quot;#475569&quot;&gt;/api/candidates/apply&lt;br&gt;/api/public/applications&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#047857;fontColor=#1e293b;fontSize=10;" vertex="1" parent="lane1">
+          <mxGeometry x="15" y="145" width="200" height="75" as="geometry" />
+        </mxCell>
+        <mxCell id="p1_bulk" value="&lt;b&gt;Carga Masiva CVs&lt;/b&gt;&lt;br&gt;CandidatePanel.tsx&lt;br&gt;&lt;font style=&quot;font-size: 9px;&quot; color=&quot;#475569&quot;&gt;Drag &amp;amp; Drop PDF / DOCX / TXT&lt;br&gt;Vacante o Pool General&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#0284c7;fontColor=#1e293b;fontSize=10;" vertex="1" parent="lane1">
+          <mxGeometry x="15" y="245" width="200" height="75" as="geometry" />
+        </mxCell>
+        <mxCell id="p1_preflight" value="&lt;b&gt;Filtro Pre-Flight CV&lt;/b&gt;&lt;br&gt;cvValidation.ts&lt;br&gt;&lt;font style=&quot;font-size: 9px;&quot; color=&quot;#991b1b&quot;&gt;Rechazo de escaneos sin OCR,&lt;br&gt;DRM o documentos no-CV&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef2f2;strokeColor=#dc2626;fontColor=#1e293b;fontSize=10;" vertex="1" parent="lane1">
+          <mxGeometry x="15" y="345" width="200" height="75" as="geometry" />
+        </mxCell>
+
+        <!-- ETAPA 2: PARSING Y NORMALIZACION -->
+        <mxCell id="lane2" value="2. PARSING Y NORMALIZACIÓN" style="swimlane;whiteSpace=wrap;html=1;fillColor=#f0f9ff;strokeColor=#0284c7;fontColor=#0369a1;fontSize=11;fontStyle=1;startSize=26;" vertex="1" parent="1">
+          <mxGeometry x="295" y="95" width="250" height="440" as="geometry" />
+        </mxCell>
+        <mxCell id="p2_extract" value="&lt;b&gt;Extracción de Texto&lt;/b&gt;&lt;br&gt;pdf-parse / mammoth&lt;br&gt;&lt;font style=&quot;font-size: 9px;&quot; color=&quot;#475569&quot;&gt;Reparación UTF-8 y mojibake&lt;br&gt;(textRepair.ts)&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#0284c7;fontColor=#1e293b;fontSize=10;" vertex="1" parent="lane2">
+          <mxGeometry x="20" y="45" width="210" height="75" as="geometry" />
+        </mxCell>
+        <mxCell id="p2_ai" value="&lt;b&gt;Análisis Semántico IA&lt;/b&gt;&lt;br&gt;Gemini / OpenAI / Claude&lt;br&gt;&lt;font style=&quot;font-size: 9px;&quot; color=&quot;#475569&quot;&gt;Temp 0.1 + Fallback Heurístico&lt;br&gt;(extractStructuredCvDataFromText)&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fffbeb;strokeColor=#d97706;fontColor=#1e293b;fontSize=10;" vertex="1" parent="lane2">
+          <mxGeometry x="20" y="150" width="210" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="p2_canon" value="&lt;b&gt;Normalizador Canónico&lt;/b&gt;&lt;br&gt;canonicalCvNormalizer.ts&lt;br&gt;&lt;font style=&quot;font-size: 9px;&quot; color=&quot;#1e3a8a&quot;&gt;- Trayectoria (últimos 3 empleos)&lt;br&gt;- Educación (Grado | Institución | Periodo)&lt;br&gt;- Certificaciones y sinopsis ejecutiva&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eff6ff;strokeColor=#1d4ed8;fontColor=#1e293b;fontSize=10;" vertex="1" parent="lane2">
+          <mxGeometry x="20" y="260" width="210" height="105" as="geometry" />
+        </mxCell>
+
+        <!-- ETAPA 3: SCORING DETERMINISTA Y DOUBLE-CHECK -->
+        <mxCell id="lane3" value="3. EVALUACIÓN DETERMINISTA" style="swimlane;whiteSpace=wrap;html=1;fillColor=#f8fafc;strokeColor=#103268;fontColor=#103268;fontSize=11;fontStyle=1;startSize=26;" vertex="1" parent="1">
+          <mxGeometry x="570" y="95" width="265" height="440" as="geometry" />
+        </mxCell>
+        <mxCell id="p3_score" value="&lt;b&gt;Motor FitScore 4D&lt;/b&gt;&lt;br&gt;vacancyUtils.ts&lt;br&gt;&lt;font style=&quot;font-size: 9px;&quot; color=&quot;#334155&quot;&gt;Dominio 40% | Seniority 30%&lt;br&gt;Requisitos 20% | Inglés 10%&lt;br&gt;Alerta isRoleLocked (&amp;plusmn;2 niveles)&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#103268;fontColor=#1e293b;fontSize=10;" vertex="1" parent="lane3">
+          <mxGeometry x="20" y="45" width="225" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="p3_q" value="&lt;b&gt;Generador de Reactivos&lt;/b&gt;&lt;br&gt;questionEngine.ts&lt;br&gt;&lt;font style=&quot;font-size: 9px;&quot; color=&quot;#334155&quot;&gt;3 Preguntas por Brecha Real (Vacante &amp;setminus; CV)&lt;br&gt;+ 4 Fijas Disponibilidad / Salario&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#1d4ed8;fontColor=#1e293b;fontSize=10;" vertex="1" parent="lane3">
+          <mxGeometry x="20" y="160" width="225" height="85" as="geometry" />
+        </mxCell>
+        <mxCell id="p3_dc" value="&lt;b&gt;Rúbrica Double-Check&lt;/b&gt;&lt;br&gt;doubleCheckEvaluator.ts&lt;br&gt;&lt;font style=&quot;font-size: 9px;&quot; color=&quot;#334155&quot;&gt;Sustancia, Pertinencia, Evidencia, STAR&lt;br&gt;Veredicto + Control Salarial (+10%)&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eff6ff;strokeColor=#1d4ed8;fontColor=#1e293b;fontSize=10;" vertex="1" parent="lane3">
+          <mxGeometry x="20" y="270" width="225" height="90" as="geometry" />
+        </mxCell>
+
+        <!-- ETAPA 4: ENTREVISTA, AGENDA Y DECISION -->
+        <mxCell id="lane4" value="4. ENTREVISTA Y SELECCIÓN" style="swimlane;whiteSpace=wrap;html=1;fillColor=#f0fdf4;strokeColor=#16a34a;fontColor=#15803d;fontSize=11;fontStyle=1;startSize=26;" vertex="1" parent="1">
+          <mxGeometry x="860" y="95" width="250" height="440" as="geometry" />
+        </mxCell>
+        <mxCell id="p4_speech" value="&lt;b&gt;Speech y Ficha Ejecutiva&lt;/b&gt;&lt;br&gt;CandidatePanel.tsx&lt;br&gt;&lt;font style=&quot;font-size: 9px;&quot; color=&quot;#334155&quot;&gt;Matriz de Competencias, FitGauge,&lt;br&gt;Exportación PDF de Terna&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#16a34a;fontColor=#1e293b;fontSize=10;" vertex="1" parent="lane4">
+          <mxGeometry x="20" y="45" width="210" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="p4_cal" value="&lt;b&gt;Agenda de Entrevistas&lt;/b&gt;&lt;br&gt;CalendarPanel / InviteModal&lt;br&gt;&lt;font style=&quot;font-size: 9px;&quot; color=&quot;#334155&quot;&gt;Sincronización de citas y notificaciones&lt;br&gt;vía n8n (/webhook/candidato-entrevista)&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#16a34a;fontColor=#1e293b;fontSize=10;" vertex="1" parent="lane4">
+          <mxGeometry x="20" y="155" width="210" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="p4_hire" value="&lt;b&gt;Feedback Manager &amp;amp; Cierre&lt;/b&gt;&lt;br&gt;Pipeline Kanban / Dashboard&lt;br&gt;&lt;font style=&quot;font-size: 9px;&quot; color=&quot;#15803d&quot;&gt;Retroalimentación controlada + Estado CONTRATADO&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#16a34a;fontColor=#1e293b;fontSize=10;" vertex="1" parent="lane4">
+          <mxGeometry x="20" y="265" width="210" height="85" as="geometry" />
+        </mxCell>
+
+        <!-- ETAPA 5: GOBERNANZA, KPIs Y AUDITORIA -->
+        <mxCell id="lane5" value="5. GOBERNANZA Y KPIs" style="swimlane;whiteSpace=wrap;html=1;fillColor=#f8fafc;strokeColor=#475569;fontColor=#1e293b;fontSize=11;fontStyle=1;startSize=26;" vertex="1" parent="1">
+          <mxGeometry x="1135" y="95" width="245" height="440" as="geometry" />
+        </mxCell>
+        <mxCell id="p5_dash" value="&lt;b&gt;Dashboard Executive&lt;/b&gt;&lt;br&gt;DashboardPanel.tsx&lt;br&gt;&lt;font style=&quot;font-size: 9px;&quot; color=&quot;#334155&quot;&gt;Time-to-Hire, Tasa Conversión,&lt;br&gt;Canales de Sourcing y Exportación&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#475569;fontColor=#1e293b;fontSize=10;" vertex="1" parent="lane5">
+          <mxGeometry x="18" y="45" width="210" height="85" as="geometry" />
+        </mxCell>
+        <mxCell id="p5_rbac" value="&lt;b&gt;Seguridad JWT &amp;amp; RBAC&lt;/b&gt;&lt;br&gt;auth.ts / UserManagement&lt;br&gt;&lt;font style=&quot;font-size: 9px;&quot; color=&quot;#334155&quot;&gt;ADMIN / RECRUITER / MANAGER&lt;br&gt;Timeout 15m y Recuperación PIN&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#103268;fontColor=#1e293b;fontSize=10;" vertex="1" parent="lane5">
+          <mxGeometry x="18" y="155" width="210" height="85" as="geometry" />
+        </mxCell>
+        <mxCell id="p5_audit" value="&lt;b&gt;Auditoría Forense LFPDPPP&lt;/b&gt;&lt;br&gt;AuditLogPanel / log_auditoria&lt;br&gt;&lt;font style=&quot;font-size: 9px;&quot; color=&quot;#334155&quot;&gt;Registro inmutable PostgreSQL&lt;br&gt;de accesos y cambios de estado&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e0e7ff;strokeColor=#4338ca;fontColor=#1e293b;fontSize=10;" vertex="1" parent="lane5">
+          <mxGeometry x="18" y="265" width="210" height="85" as="geometry" />
+        </mxCell>
+
+        <!-- CAPA INFERIOR: PERSISTENCIA Y REPOSITORIOS -->
+        <mxCell id="base_db" value="&lt;b&gt;Fuente Única de Verdad (PostgreSQL 16 + n8n Webhooks)&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size: 10px;&quot;&gt;Tablas: auth_users, app_users, vacancies, candidates, log_auditoria | Sincronización continua e inmutable&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#103268;strokeColor=#0d234a;fontColor=#ffffff;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="40" y="565" width="1340" height="55" as="geometry" />
+        </mxCell>
+
+        <mxCell id="repos_bar" value="&lt;b&gt;Repositorios Desacoplados GitHub:&lt;/b&gt; Frontend: https://github.com/eaguilarh01/talent_ia_frontend.git  |  Backend: https://github.com/eaguilarh01/talent_ia_backend.git" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eff6ff;strokeColor=#93c5fd;fontColor=#1e3a8a;fontSize=10.5;" vertex="1" parent="1">
+          <mxGeometry x="40" y="635" width="1340" height="36" as="geometry" />
+        </mxCell>
+
+        <!-- FLECHAS DE FLUJO -->
+        <mxCell id="f1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#0284c7;strokeWidth=2;" edge="1" parent="1" source="p1_bulk" target="p2_extract"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="f2" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#0284c7;strokeWidth=2;" edge="1" parent="1" source="p2_extract" target="p2_ai"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="f3" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#1d4ed8;strokeWidth=2;" edge="1" parent="1" source="p2_ai" target="p2_canon"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="f4" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#103268;strokeWidth=2;" edge="1" parent="1" source="p2_canon" target="p3_score"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="f5" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#1d4ed8;strokeWidth=2;" edge="1" parent="1" source="p3_score" target="p3_q"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="f6" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#1d4ed8;strokeWidth=2;" edge="1" parent="1" source="p3_q" target="p3_dc"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="f7" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#16a34a;strokeWidth=2;" edge="1" parent="1" source="p3_dc" target="p4_speech"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="f8" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#16a34a;strokeWidth=2;" edge="1" parent="1" source="p4_speech" target="p4_cal"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="f9" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#16a34a;strokeWidth=2;" edge="1" parent="1" source="p4_cal" target="p4_hire"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="f10" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#475569;strokeWidth=2;" edge="1" parent="1" source="p4_hire" target="p5_dash"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
