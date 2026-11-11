@@ -1,8 +1,14 @@
 /**
  * Utility functions for vacancy data processing and title formatting.
  */
-import { Candidate, Vacancy, VacancyProfileWeight } from '../types.js';
-import { isUsableRequirement, cleanRequirementForQuestion } from './questionEngine.js';
+import { Candidate, Vacancy, VacancyProfileWeight, FitScoreBreakdown } from '../types.js';
+import {
+  isUsableRequirement,
+  cleanRequirementForQuestion,
+  auditCandidateRequirements,
+  extractSectionAwareCvContexts,
+  stripAspirationalNoise
+} from './questionEngine.js';
 
 export function sanitizeUtf8<T>(val: T): T {
   if (val === null || val === undefined) return val;
@@ -29,7 +35,7 @@ export function sanitizeUtf8<T>(val: T): T {
 export function fixCorruptedAccents(text: string): string {
   if (!text) return "";
   let clean = typeof text === 'string' ? text.normalize('NFC').replace(/\u0000/g, '').replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]/g, '').replace(/\ufffd/g, '') : String(text);
-  
+
   clean = clean
     // UTF-8 Mojibake fixes
     .replace(/Ã¡/g, 'á')
@@ -195,7 +201,7 @@ export function extractProperNameFromText(text?: string, keywordFilter?: string)
 
   // 1. Explicit Label Pattern Matching (e.g. "Nombre: ROSA EVELYN ROSALES VALADEZ" or "Nombre completo: Juan Perez" or "Resume | José Francisco Escandón Gaya")
   const labelMatch = normalizedText.match(/(?:nombre|candidato|postulante|name|nombre completo|candidato\/a)\s*[\:\-]\s*([A-ZÁÉÍÓÚÑa-záéíóúñ\s\.]{4,60})/i) ||
-                     normalizedText.match(/(?:resume|cv|curriculum(\s+vitae)?)\s*\|\s*([A-ZÁÉÍÓÚÑa-záéíóúñ\s\.]{4,60})/i);
+    normalizedText.match(/(?:resume|cv|curriculum(\s+vitae)?)\s*\|\s*([A-ZÁÉÍÓÚÑa-záéíóúñ\s\.]{4,60})/i);
   if (labelMatch && labelMatch[1]) {
     const rawVal = labelMatch[1].trim().replace(/^[•\-\*\d\.\)\s]+/, '').trim();
     const words = rawVal.split(/\s+/).filter(Boolean);
@@ -242,7 +248,7 @@ export function extractProperNameFromText(text?: string, keywordFilter?: string)
         const res = evaluateLine(lines[i]);
         if (res) return res;
         if (i + 1 < lines.length) {
-          const comb = `${lines[i]} ${lines[i+1]}`;
+          const comb = `${lines[i]} ${lines[i + 1]}`;
           const resComb = evaluateLine(comb);
           if (resComb) return resComb;
         }
@@ -355,9 +361,9 @@ export function cleanCandidateName(name: string, resumeText?: string, email?: st
   ];
 
   const words = cleaned.split(/\s+/).filter(Boolean);
-  const isInvalid = buzzwords.some(b => lower.includes(b)) || 
+  const isInvalid = buzzwords.some(b => lower.includes(b)) ||
     nonNameWords.some(w => lower.split(/\s+/).includes(w)) ||
-    words.length < 2 || 
+    words.length < 2 ||
     /^(laboratorios|customer|work|employment|personal|datos|informaci[óo]n|experiencia|curriculum|resumen|estrat[ée]gicos|profesional|ingenier[ao]|acoustimatch|acerca|sobre|dentalhealth|motor|sistema)\b/i.test(cleaned);
 
   if (isInvalid) {
@@ -1228,6 +1234,7 @@ export function calculateStrictFitScore(
   seniorityGapReason?: string;
   strengths: string[];
   growths: string[];
+  breakdown?: FitScoreBreakdown;
 } {
   if (!candidate) {
     return { fitScore: 50, initialFitScore: 50, hasDomainMismatch: false, strengths: [], growths: [] };
@@ -1241,7 +1248,25 @@ export function calculateStrictFitScore(
   const safeFallbackText = (!candidate.resumeText || candidate.resumeText.trim().length < 25) && candidate.summary && !isLegacyOrClonedSummary(candidate.summary)
     ? candidate.summary
     : '';
-  const cvText = `${candidate.name || ''} ${candidate.resumeText || ''} ${safeFallbackText} ${expStr} ${eduStr} ${certStr}`.toLowerCase();
+  const cleanedResume = stripAspirationalNoise(candidate.resumeText || '');
+  const sectionCtx = extractSectionAwareCvContexts({
+    name: candidate.name,
+    resumeText: cleanedResume,
+    summary: safeFallbackText,
+    experience: candidate.experience,
+    education: candidate.education,
+    certifications: candidate.certifications
+  });
+  const resumeWithoutObjectives = cleanedResume.replace(
+    /(?:objetivo(?:s)?\s+profesional(?:es)?|inter[eé]s(?:es)?|hobbies|pasatiempos)\s*[\:\n][\s\S]{0,280}?(?=\n(?:experiencia|educaci[oó]n|formaci[oó]n|habilidades|certificac)|$)/gi,
+    ' '
+  );
+  // Si el CV tiene bloque explícito de experiencia laboral verificable, evaluar dominio sobre trayectoria real + certificaciones (evita falsos positivos por menciones académicas/deseo de aprender)
+  const domainText = (sectionCtx.expContext.length >= 60
+    ? `${sectionCtx.expContext} ${sectionCtx.certContext}`
+    : `${candidate.name || ''} ${resumeWithoutObjectives} ${safeFallbackText} ${expStr} ${certStr}`
+  ).toLowerCase();
+  const cvText = `${candidate.name || ''} ${resumeWithoutObjectives} ${safeFallbackText} ${expStr} ${eduStr} ${certStr}`.toLowerCase();
 
   const vacTitle = (vacancy?.title || '').toLowerCase();
   const vacDept = (vacancy?.department || '').toLowerCase();
@@ -1310,57 +1335,57 @@ export function calculateStrictFitScore(
 
   const vacYears = vacancy.experienceYears ?? 3;
   const reqLevel = vacancy.requiredGuidanceLevel || '';
-  const isAcademiaOrTrainee = /\b(academia|becari[oa]|trainee|intern|practicante|semillero)\b/i.test(vacTitle) || 
-                              /\b(becario|guia becario)\b/i.test(reqLevel) || 
-                              vacYears === 0;
+  const isAcademiaOrTrainee = /\b(academia|becari[oa]|trainee|intern|practicante|semillero)\b/i.test(vacTitle) ||
+    /\b(becario|guia becario)\b/i.test(reqLevel) ||
+    vacYears === 0;
 
-  const isSapVac = /\bsap\b|s\/?4\s?hana|\becc\b|\babap\b|\bbtp\b|\bcpi\b|\bbasis\b|\bgrc\b|\bworzone\b|\bworkzone\b|\bsolman\b|\bsolution\s+manager\b|\btqs\b/i.test(vacTitle) || 
+  const isSapVac = /\bsap\b|s\/?4\s?hana|\becc\b|\babap\b|\bbtp\b|\bcpi\b|\bbasis\b|\bgrc\b|\bworzone\b|\bworkzone\b|\bsolman\b|\bsolution\s+manager\b|\btqs\b/i.test(vacTitle) ||
     (/\bsap\b/i.test(vacDept) && !/product|scrum|rh|recursos humanos|comercial/i.test(vacTitle));
-  const hasSapExp = /\b(sap|s\/?4\s?hana|s4hana|ecc|abap|btp|cpi|sd|mm|fi|co|pp|wm|qm|basis|sac|ariba|sfsf|solman|solution\s+manager|grc|workzone|worzone|fiori)\b/i.test(cvText);
+  const hasSapExp = /\b(sap|s\/?4\s?hana|s4hana|ecc|abap|btp|cpi|sd|mm|fi|co|pp|wm|qm|basis|sac|ariba|sfsf|solman|solution\s+manager|grc|workzone|worzone|fiori)\b/i.test(domainText);
 
   // Sub-especialidades técnicas críticas en SAP e Infraestructura
   const isBtpLeadVac = /l[íi]der\s+t[ée]cnico\s+btp|btp\s+lead|arquitecto\s+btp|\bbtp\b/i.test(vacTitle);
-  const hasBtpExp = /\b(btp|business technology platform|cpi|cloud integration|integration suite|cap|cds|ui5|fiori|hana cloud)\b/i.test(cvText);
+  const hasBtpExp = /\b(btp|business technology platform|cpi|cloud integration|integration suite|cap|cds|ui5|fiori|hana cloud)\b/i.test(domainText);
 
   const isBasisVac = /\bbasis\b|netweaver|administrador\s+sap/i.test(vacTitle);
-  const hasBasisExp = /\b(basis|netweaver|hana db|kernel|spau|spdd|transporte|tms|solution manager|solman|sm100)\b/i.test(cvText);
+  const hasBasisExp = /\b(basis|netweaver|hana db|kernel|spau|spdd|transporte|tms|solution manager|solman|sm100)\b/i.test(domainText);
 
   const isWorkzoneVac = /worzone|workzone|portal/i.test(vacTitle);
-  const hasWorkzoneExp = /\b(workzone|worzone|launchpad|fiori|portal\s+sap|sap\s+build)\b/i.test(cvText);
+  const hasWorkzoneExp = /\b(workzone|worzone|launchpad|fiori|portal\s+sap|sap\s+build)\b/i.test(domainText);
 
   const isGrcVac = /\bgrc\b|seguridad\s+sap/i.test(vacTitle);
-  const hasGrcExp = /\b(grc|access\s+control|process\s+control|segregaci[oó]n\s+de\s+funciones|\bsod\b|pfcg|roles\s+y\s+perfiles\s+sap|auditor[ií]a\s+sap)\b/i.test(cvText);
+  const hasGrcExp = /\b(grc|access\s+control|process\s+control|segregaci[oó]n\s+de\s+funciones|\bsod\b|pfcg|roles\s+y\s+perfiles\s+sap|auditor[ií]a\s+sap)\b/i.test(domainText);
 
   const isSolmanVac = /solution\s+manager|solman/i.test(vacTitle);
-  const hasSolmanExp = /\b(solution\s+manager|solman|charm|itsm|alm\s+sap)\b/i.test(cvText);
+  const hasSolmanExp = /\b(solution\s+manager|solman|charm|itsm|alm\s+sap)\b/i.test(domainText);
 
   const isSalesVac = /consultor.*venta|ejecutivo.*venta|gerente comercial|prospecci[oó]n|ventas b2b|ventas/i.test(vacTitle) || /comercial/i.test(vacDept);
-  const hasSalesExp = /\b(prospecci[oó]n|ventas? b2b|cierre de ventas|embudo de ventas|pipeline|desarrollo de clientes|cuota de ventas|hunter|key account manager|b2b|b2c|cotizaciones?|generaci[oó]n de leads)\b/i.test(cvText);
+  const hasSalesExp = /\b(prospecci[oó]n|ventas? b2b|cierre de ventas|embudo de ventas|pipeline|desarrollo de clientes|cuota de ventas|hunter|key account manager|b2b|b2c|cotizaciones?|generaci[oó]n de leads)\b/i.test(domainText);
 
   const isDevVac = /desarroll|react|node|javascript|python|java|sql|frontend|backend|cloud|software engineer/i.test(vacTitle) && !isSapVac;
-  const hasDevExp = /\b(programaci[oó]n|c[oó]digo|desarrollo de software|react|node|javascript|typescript|python|java|sql|frontend|backend|fullstack|git|c\+\+|c#|\.net|sistemas)\b/i.test(cvText);
+  const hasDevExp = /\b(programaci[oó]n|c[oó]digo|desarrollo de software|desarrollador|react|node\.?js|javascript|typescript|python|java|sql|frontend|backend|fullstack|git|c\+\+|c#|\.net)\b/i.test(domainText);
 
   const isLinuxOrSupportVac = /linux|soporte|infraestructura|administraci[oó]n\s+it|entrega\s+de\s+servicios/i.test(vacTitle);
-  const hasLinuxOrSupportExp = /\b(linux|unix|red\s*hat|ubuntu|centos|servidor|soporte\s+t[eé]cnico|soporte\s+ti|itil|mesa\s+de\s+ayuda|sql|redes|infraestructura|administraci[oó]n\s+de\s+sistemas|implementaci[oó]n\s+de\s+sistemas)\b/i.test(cvText);
+  const hasLinuxOrSupportExp = /\b(linux|unix|red\s*hat|ubuntu|centos|servidor|soporte\s+t[eé]cnico|soporte\s+ti|itil|mesa\s+de\s+ayuda|sql|redes|infraestructura|administraci[oó]n\s+de\s+sistemas|implementaci[oó]n\s+de\s+sistemas)\b/i.test(domainText);
 
   const isProductVac = /product owner|product manager|scrum master|agile|dueño de producto|lider de producto|delivery manager|project\s+manager|projec\s+manager/i.test(vacTitle);
-  const hasProductOrPmExp = /\b(product owner|product manager|scrum master|backlog|historias de usuario|user stories|roadmaps?|agile|scrum|kanban|product discovery|project\s+manager|director\s+de\s+proyectos|gerente\s+de\s+proyectos|pmo|transformaci[oó]n\s+digital|portafolio\s+de\s+proyectos|an[aá]lisis,\s+diseño\s+e\s+implementaci[oó]n)\b/i.test(cvText);
+  const hasProductOrPmExp = /\b(product owner|product manager|scrum master|backlog|historias de usuario|user stories|roadmaps?|agile|scrum|kanban|product discovery|project\s+manager|director\s+de\s+proyectos|gerente\s+de\s+proyectos|pmo|transformaci[oó]n\s+digital|portafolio\s+de\s+proyectos|an[aá]lisis,\s+diseño\s+e\s+implementaci[oó]n)\b/i.test(domainText);
 
   const isFinVac = /financier|contab|tesorer|impuestos|auditor|contadur|facturaci[oó]n/i.test(fullVacText) && !/product|software|sap\s+basis|btp/i.test(vacTitle);
-  const hasFinExp = /\b(contabilidad|estados financieros|impuestos|auditor[ií]a|tesorer[ií]a|presupuestos|balance|nif|costos|cuentas por pagar|cuentas por cobrar|facturaci[oó]n|anexo\s+22|fiscal)\b/i.test(cvText);
+  const hasFinExp = /\b(contabilidad|estados financieros|impuestos|auditor[ií]a|tesorer[ií]a|presupuestos|balance|nif|costos|cuentas por pagar|cuentas por cobrar|facturaci[oó]n|anexo\s+22|fiscal)\b/i.test(domainText);
 
   const isHrVac = /recursos humanos|capital\s+humano|reclutam|talento|n[oó]mina|psicolog/i.test(fullVacText) && !/product|software/i.test(vacTitle);
-  const hasHrExp = /\b(reclutamiento|atracci[oó]n de talento|entrevistas|n[oó]mina|recursos humanos|capital\s+humano|relaciones laborales)\b/i.test(cvText);
+  const hasHrExp = /\b(reclutamiento|atracci[oó]n de talento|entrevistas|n[oó]mina|recursos humanos|capital\s+humano|relaciones laborales)\b/i.test(domainText);
 
   // Dominio Operativo / Servicios Generales / Limpieza / Intendencia
   const isOperativeVac = /servicios generales|intendencia|limpieza|mantenimiento operativo|conserje|ayudante general|residuos s[oó]lidos|desinfecci[oó]n|vajilla|mopas|pulidoras/i.test(fullVacText);
-  const hasOperativeExp = /\b(desinfecci[oó]n|limpieza|mopas?|pulidoras?|aspiradoras?|residuos s[oó]lidos|lavado de vajilla|intendente|intendencia|conserje|mantenimiento preventivo de herramientas operativas de limpieza)\b/i.test(cvText);
+  const hasOperativeExp = /\b(desinfecci[oó]n|limpieza|mopas?|pulidoras?|aspiradoras?|residuos s[oó]lidos|lavado de vajilla|intendente|intendencia|conserje|mantenimiento preventivo de herramientas operativas de limpieza)\b/i.test(domainText);
 
   const isTechOrCorporateCandidate = hasSapExp || hasDevExp || hasProductOrPmExp || hasFinExp || hasHrExp || hasLinuxOrSupportExp ||
     /\b(software|ingenier[oóa]|cloud|devops|scrum|product|full\s*stack|frontend|backend|licenciatura|universidad|consultor|analista)\b/i.test(cvText);
 
   // Perfil puramente financiero/contable sin desarrollo técnico especializado
-  const isPureFinanceProfile = hasFinExp && !/\b(sap fi|sap co|consultor sap|implementaci[oó]n sap|s4hana fi)\b/i.test(cvText) && !hasDevExp && !hasBtpExp && !hasBasisExp;
+  const isPureFinanceProfile = hasFinExp && !/\b(sap fi|sap co|consultor sap|implementaci[oó]n sap|s4hana fi)\b/i.test(domainText) && !hasDevExp && !hasBtpExp && !hasBasisExp;
 
   // Reglas de Exclusión e Incompatibilidad Crítica de Profesión + Hard-Skill Gate
   if (isHealthCandidate) {
@@ -1462,33 +1487,26 @@ export function calculateStrictFitScore(
     .map(r => String(r || '').trim())
     .filter(isUsableRequirement);
 
-  const matchedRequirements: string[] = [];
-  const missingRequirements: string[] = [];
-
-  cleanReqs.forEach(cleanReq => {
-    const tokens = cleanReq
-      .toLowerCase()
-      .split(/[\s,/\-\+\(\)]+/)
-      .filter(t => t.length > 2 && !/^(años|año|years|year|para|con|del|los|las|por|una|uno|uso|manejo|nivel|experiencia|conocimientos|habilidades)$/i.test(t));
-    const hasMatch = tokens.length > 0
-      ? tokens.some(tok =>
-          cvText.includes(tok) ||
-          (tok === 'crm' && /salesforce|hubspot|dynamics|zoho|pipedrive/i.test(cvText)) ||
-          (tok === 'agile' && /scrum|kanban|[aá]gil|backlog|sprint/i.test(cvText)) ||
-          (tok === 'scrum' && /director\s+de\s+proyectos|project\s+manager|an[aá]lisis,\s*diseño\s+e\s+implementaci[oó]n|backlog|agile/i.test(cvText)) ||
-          (tok === 'backlog' && /product\s+owner|scrum|proyectos|requerimientos|an[aá]lisis,\s*diseño\s+e\s+implementaci[oó]n/i.test(cvText)) ||
-          (tok === 'stakeholders' && /clientes|usuarios|direcci[oó]n|director\s+de\s+proyectos|negociaci[oó]n/i.test(cvText)) ||
-          (tok === 'stories' && /requerimientos|especificaciones|an[aá]lisis,\s*diseño|historias/i.test(cvText))
-        )
-      : cvText.includes(cleanReq.toLowerCase());
-    if (hasMatch) {
-      matchedRequirements.push(cleanReq);
-    } else {
-      missingRequirements.push(cleanReq);
-    }
+  const reqAudit = auditCandidateRequirements(cleanReqs, {
+    name: candidate.name,
+    resumeText: resumeWithoutObjectives,
+    summary: safeFallbackText,
+    experience: candidate.experience,
+    education: candidate.education,
+    certifications: candidate.certifications
   });
+  const matchedRequirements: string[] = reqAudit.matched.map(m => m.req);
+  const missingRequirements: string[] = reqAudit.missing;
 
-  const reqMatchRatio = cleanReqs.length > 0 ? matchedRequirements.length / cleanReqs.length : 0.6;
+  const sourceWeights: Record<'experience' | 'certifications' | 'education' | 'resume', number> = {
+    experience: 1.0,
+    resume: 0.85,
+    certifications: 0.75,
+    education: 0.45
+  };
+  const weightedMatched = reqAudit.matched.reduce((sum, m) => sum + (sourceWeights[m.source] || 0.75), 0);
+  const strongMatchedCount = reqAudit.matched.filter(m => m.source !== 'education').length;
+  const reqMatchRatio = cleanReqs.length > 0 ? Math.min(1, weightedMatched / cleanReqs.length) : 0.6;
   const hasCoreDomainAffinity =
     (isSapVac && hasSapExp) ||
     (isSalesVac && hasSalesExp) ||
@@ -1499,10 +1517,10 @@ export function calculateStrictFitScore(
     (isHrVac && hasHrExp) ||
     (isOperativeVac && hasOperativeExp);
 
-  // Si tiene 0% de coincidencia con los requerimientos técnicos Y tampoco acredita experiencia en el dominio nuclear de la vacante, activar compuerta técnica
-  if (!domainMismatchDetected && !isAcademiaOrTrainee && !hasCoreDomainAffinity && cleanReqs.length >= 2 && matchedRequirements.length === 0) {
+  // Si tiene 0% de coincidencia sustancial en experiencia/habilidades y tampoco acredita dominio nuclear de la vacante, activar compuerta técnica
+  if (!domainMismatchDetected && !isAcademiaOrTrainee && !hasCoreDomainAffinity && cleanReqs.length >= 2 && strongMatchedCount === 0) {
     domainMismatchDetected = true;
-    domainMismatchReason = `BRECHA CRÍTICA DE HABILIDADES TÉCNICAS: El CV del candidato no acredita ninguno de los requerimientos técnicos clave exigidos por la vacante '${vacancy.title}' (${cleanReqs.slice(0, 3).join(', ')}).`;
+    domainMismatchReason = `BRECHA CRÍTICA DE HABILIDADES TÉCNICAS: El CV del candidato no acredita experiencia laboral práctica en los requerimientos clave exigidos por la vacante '${vacancy.title}' (${cleanReqs.slice(0, 3).join(', ')}).`;
   }
 
   // Eje 1: Afinidad de Perfil de Puesto y Habilidades Técnicas (50%)
@@ -1645,8 +1663,8 @@ export function calculateStrictFitScore(
   const seniorityGapMsg = isSevereOverqualified
     ? `Desfase jerárquico crítico (+${seniorityRankGap} niveles): Candidato sobrecalificado (${candLevelLabel} vs ${vacLevelLabel})`
     : isSevereUnderqualified
-    ? `Desfase jerárquico crítico (${seniorityRankGap} niveles): Candidato subcalificado (${candLevelLabel} vs ${vacLevelLabel})`
-    : undefined;
+      ? `Desfase jerárquico crítico (${seniorityRankGap} niveles): Candidato subcalificado (${candLevelLabel} vs ${vacLevelLabel})`
+      : undefined;
 
   return {
     fitScore: finalScore,
@@ -1657,7 +1675,22 @@ export function calculateStrictFitScore(
     hasSeniorityGap: isSevereOverqualified || isSevereUnderqualified,
     seniorityGapReason: seniorityGapMsg,
     strengths: strengthsList,
-    growths: growthsList
+    growths: growthsList,
+    breakdown: {
+      cvBaseScore: finalScore,
+      doubleCheckDelta: 0,
+      manualFeedbackDelta: 0,
+      finalScore,
+      matchedRequirements: reqAudit.matched,
+      missingRequirements: reqAudit.missing,
+      domainAffinityScore,
+      seniorityScore,
+      reqsScore,
+      englishScore,
+      hasDomainMismatch: domainMismatchDetected,
+      mismatchReason: domainMismatchReason || seniorityGapMsg,
+      recalculatedAt: new Date().toISOString()
+    }
   };
 }
 
@@ -1685,9 +1718,9 @@ export function computeGuidanceForCandidate(candidate?: Partial<Candidate> | nul
   const rawCv = `${candidate.resumeText || ''} ${expStr}`.toLowerCase();
   const vacTitle = (vacancy?.title || '').toLowerCase();
   const vacYears = vacancy?.experienceYears ?? 3;
-  const isAcademiaOrTrainee = /\b(academia|becari[oa]|trainee|intern|practicante|semillero)\b/i.test(vacTitle) || 
-                              /\b(becario|guia becario)\b/i.test(vacancy?.requiredGuidanceLevel || '') || 
-                              vacYears === 0;
+  const isAcademiaOrTrainee = /\b(academia|becari[oa]|trainee|intern|practicante|semillero)\b/i.test(vacTitle) ||
+    /\b(becario|guia becario)\b/i.test(vacancy?.requiredGuidanceLevel || '') ||
+    vacYears === 0;
 
   const { years: candYears, isExplicitlyNoExp } = extractVerifiedCandidateYears(candidate);
 

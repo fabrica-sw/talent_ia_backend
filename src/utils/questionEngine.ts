@@ -25,11 +25,19 @@ export interface QuestionCandidate {
   resumeText?: string;
   summary?: string;
   experience?: string[];
+  education?: string[];
+  certifications?: string[];
 }
 
 export interface QuestionOptions {
   seed?: number | string;
   exclude?: string[];
+  precomputedAudit?: {
+    matched?: Array<{ req: string; source: 'experience' | 'certifications' | 'education' | 'resume' }>;
+    missing?: string[];
+    matchedRequirements?: Array<{ req: string; source: 'experience' | 'certifications' | 'education' | 'resume' }>;
+    missingRequirements?: string[];
+  };
 }
 
 export type VacancyDomain =
@@ -126,16 +134,101 @@ function containsTerm(cvNorm: string, term: string): boolean {
   return new RegExp(`(^|[^a-z0-9])${escaped}([^a-z0-9]|$)`).test(cvNorm);
 }
 
-/** Un requisito se considera cubierto si al menos la mitad de sus términos significativos aparecen en el CV. */
+/** Limpia declaraciones aspiracionales/de interés ("me gustaría aprender X", "objetivo: ...") para evitar falsos positivos. */
+export function stripAspirationalNoise(text: string): string {
+  if (!text) return '';
+  return text
+    .replace(/\b(?:me\s+gustar[ií]a\s+aprender|deseo\s+aprender|inter[eé]s\s+en\s+aprender|buscando\s+aprender|sin\s+experiencia\s+en)\b[^.\n]*/gi, ' ');
+}
+
+/** Separa el CV en secciones ponderables para distinguir experiencia real de menciones académicas/periféricas. */
+export function extractSectionAwareCvContexts(candidate: QuestionCandidate): {
+  expContext: string;
+  certContext: string;
+  eduContext: string;
+  fullContext: string;
+} {
+  const resumeClean = stripAspirationalNoise(candidate.resumeText || '');
+  const expArr = Array.isArray(candidate.experience) ? candidate.experience.filter(Boolean).join('\n') : '';
+  const certArr = Array.isArray(candidate.certifications) ? candidate.certifications.filter(Boolean).join('\n') : '';
+  const eduArr = Array.isArray(candidate.education) ? candidate.education.filter(Boolean).join('\n') : '';
+
+  let resumeExpBlock = '';
+  if (resumeClean.length > 25) {
+    const expMatch = resumeClean.match(/(?:experiencia\s+(?:laboral|profesional(?:\s+y\s+aplicada)?)|trayectoria(?:\s+laboral|\s+profesional)?|work\s+experience|employment\s+history|historial\s+laboral)([\s\S]*?)(?:educaci[oó]n|formaci[oó]n\s+acad[eé]mica|estudios|certificac|habilidades\s+blandas|referencias|$)/i);
+    if (expMatch && expMatch[1] && expMatch[1].trim().length > 20) {
+      resumeExpBlock = expMatch[1];
+    }
+  }
+
+  const expContext = normalizeText([expArr, resumeExpBlock].filter(Boolean).join('\n'));
+  const certContext = normalizeText(certArr);
+  const eduContext = normalizeText(eduArr);
+  const fullContext = normalizeText([expArr, certArr, resumeClean, eduArr].filter(Boolean).join('\n'));
+
+  return { expContext, certContext, eduContext, fullContext };
+}
+
+function hasRequirementTermOrAlias(normText: string, term: string): boolean {
+  if (containsTerm(normText, term)) return true;
+  if (term === 'crm') return /\b(salesforce|hubspot|dynamics|zoho|pipedrive|crm)\b/.test(normText);
+  if (term === 'agile' || term === 'agil' || term === 'agiles') return /\b(scrum|kanban|agil|backlog|sprint|lean)\b/.test(normText);
+  if (term === 'scrum') return /\b(scrum|agile|agil|backlog|sprint)\b/.test(normText);
+  if (term === 'backlog') return /\b(backlog|historias?\s+de\s+usuario|user\s+stories|product\s+owner|priorizacion)\b/.test(normText);
+  if (term === 'stakeholders') return /\b(stakeholders|directivos|usuarios\s+clave|clientes\s+internos|c-level|direccion)\b/.test(normText);
+  if (term === 'erp') return /\b(erp|sap|oracle|netsuite|odoo|dynamics|s\/?4\s?hana)\b/.test(normText);
+  if (term === 'b2b') return /\b(b2b|corporativ|empresarial|empres|cuentas\s+clave|kam|c-level)\b/.test(normText);
+  return false;
+}
+
+/**
+ * Fuente única de verdad compartida entre Score y Double-Check para auditar requisitos vs CV.
+ * Exige >= 60% de términos significativos del requisito (evitando falsos positivos por 1 palabra suelta).
+ */
+export function auditCandidateRequirements(requirements: string[], candidate: QuestionCandidate): {
+  matched: Array<{ req: string; source: 'experience' | 'certifications' | 'education' | 'resume' }>;
+  missing: string[];
+} {
+  const ctx = extractSectionAwareCvContexts(candidate);
+  const matched: Array<{ req: string; source: 'experience' | 'certifications' | 'education' | 'resume' }> = [];
+  const missing: string[] = [];
+
+  for (const rawReq of (requirements || []).filter(isUsableRequirement)) {
+    const req = rawReq.trim();
+    const terms = requirementTerms(req);
+    if (terms.length === 0) continue;
+    const minNeeded = Math.max(1, Math.ceil(terms.length * 0.6));
+
+    const expHits = ctx.expContext ? terms.filter(t => hasRequirementTermOrAlias(ctx.expContext, t)).length : 0;
+    const certHits = ctx.certContext ? terms.filter(t => hasRequirementTermOrAlias(ctx.certContext, t)).length : 0;
+    const eduHits = ctx.eduContext ? terms.filter(t => hasRequirementTermOrAlias(ctx.eduContext, t)).length : 0;
+    const fullHits = terms.filter(t => hasRequirementTermOrAlias(ctx.fullContext, t)).length;
+
+    if (expHits >= minNeeded) {
+      matched.push({ req, source: 'experience' });
+    } else if (certHits >= minNeeded) {
+      matched.push({ req, source: 'certifications' });
+    } else if (fullHits >= minNeeded) {
+      matched.push({ req, source: eduHits >= minNeeded && fullHits === eduHits ? 'education' : 'resume' });
+    } else {
+      missing.push(req);
+    }
+  }
+
+  return { matched, missing };
+}
+
+/** Un requisito se considera cubierto si al menos el 60% de sus términos significativos aparecen en el CV. */
 export function matchRequirements(requirements: string[], cvText: string) {
-  const cvNorm = normalizeText(cvText);
+  const cvNorm = normalizeText(stripAspirationalNoise(cvText));
   const matched: string[] = [];
   const gaps: string[] = [];
   for (const req of requirements.filter(isUsableRequirement)) {
     const terms = requirementTerms(req);
     if (terms.length === 0) continue;
-    const hits = terms.filter(t => containsTerm(cvNorm, t)).length;
-    (hits >= Math.ceil(terms.length / 2) ? matched : gaps).push(req.trim());
+    const minNeeded = Math.max(1, Math.ceil(terms.length * 0.6));
+    const hits = terms.filter(t => hasRequirementTermOrAlias(cvNorm, t)).length;
+    (hits >= minNeeded ? matched : gaps).push(req.trim());
   }
   return { matched, gaps };
 }
@@ -367,8 +460,11 @@ export function generateExperienceQuestions(
 ): string[] {
   const rnd = mulberry32(hashSeed(opts.seed ?? `${candidate.name || ''}|${vacancy.title || ''}`));
   const exclude = new Set((opts.exclude || []).map(q => normalizeText(q).trim()));
-  const cvText = [candidate.resumeText, candidate.summary, ...(candidate.experience || [])].filter(Boolean).join('\n');
-  const { matched, gaps } = matchRequirements(vacancy.requirements || [], cvText);
+  const fallbackAudit = !opts.precomputedAudit ? auditCandidateRequirements(vacancy.requirements || [], candidate) : undefined;
+  const rawMatched = opts.precomputedAudit?.matched || opts.precomputedAudit?.matchedRequirements || fallbackAudit?.matched || [];
+  const rawMissing = opts.precomputedAudit?.missing || opts.precomputedAudit?.missingRequirements || fallbackAudit?.missing || [];
+  const matched = rawMatched.map(m => m.req);
+  const gaps = rawMissing;
   const domain = classifyVacancy(vacancy);
   const { puesto, empresa } = latestRole(candidate.experience);
 

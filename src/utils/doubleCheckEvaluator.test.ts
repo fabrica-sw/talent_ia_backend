@@ -110,4 +110,31 @@ test('lee montos en pesos', () => {
   assert.deepEqual(parseMoney('52k'), [52000]);
 });
 
+test('evalúa positivamente respuestas en gerundio o pretérito perfecto con herramientas SAP/CRM y métricas', () => {
+  const sapVac = { title: 'Consultor SAP Basis / BTP', department: 'TI', requirements: ['SAP BTP', 'HANA DB'], salaryRange: '60000 - 80000', modalidad: 'Híbrido' };
+  const qs = [
+    '¿Qué experiencia práctica tienes administrando SAP BTP y HANA DB?',
+    'Describe una migración compleja que hayas coordinado.',
+    '¿Cómo aseguras el monitoreo preventivo en producción?',
+    ...FIXED_AVAILABILITY_QUESTIONS,
+  ];
+  const answers = [
+    'Durante el proyecto en Novis (2023) he liderado la migración de SAP HANA y CPI en BTP, optimizando el monitoreo con SolMan para 45 interfaces productivas y reduciendo incidencias en un 35%.',
+    'He coordinado junto con el equipo técnico la administración de 12 servidores Linux y transporte de órdenes logrando 99.9% de disponibilidad anual para el cliente.',
+    'Implementando tableros preventivos con ServiceNow y scripts automatizados de respaldo, logrando cumplir SLA de 98% durante 18 meses en producción.',
+    'Inmediata en 15 días',
+    '$65,000 brutos mensuales',
+    'CDMX, México',
+    'Híbrido sin problema',
+  ];
+  const res = evaluateDoubleCheck({
+    questions: qs.map((question, i) => ({ question, answer: answers[i] })),
+    vacancy: sapVac,
+    candidate: { name: 'Janett López', experience: ['SAP Basis | Novis | 2023 - Actual'] },
+    baseScore: 76,
+  });
+  assert.equal(res.verdict, 'APROBADO PARA ENTREVISTA');
+  assert.ok(res.experienceQuality >= 75);
+});
+
 console.log(`\n${passed} pruebas del evaluador Double-Check OK`);

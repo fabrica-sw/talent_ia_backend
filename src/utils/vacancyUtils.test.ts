@@ -11,6 +11,7 @@ import {
   isStaticLegacyCompetencies
 } from './vacancyUtils.js';
 import { Candidate, Vacancy } from '../types.js';
+import { generateExperienceQuestions } from './questionEngine.js';
 
 /**
  * Harness de Pruebas Unitarias Automatizadas
@@ -360,9 +361,35 @@ export function runVacancyUtilsTests() {
   assert(odontologoOnPo.hasDomainMismatch === true && odontologoOnPo.fitScore <= 18, 'Odontólogo real debe ser descartado en vacante TI Product Owner (<= 18%)');
   assert(odontologoInPool.hasDomainMismatch === true && odontologoInPool.fitScore <= 18, 'Odontólogo real debe ser descartado incluso en Talent Pool general de empresa tecnológica (<= 18%)');
 
+  // 21. Anti-Falso-Positivo por menciones aspiracionales u objetivos + Coherencia Score vs Preguntas Double-Check
+  const fakeObjectiveCand: Partial<Candidate> = {
+    id: 'cand-false-pos-1',
+    name: 'Mario Aspirante',
+    resumeText: 'Objetivo Profesional: Interés en aprender SAP BTP y Python. Experiencia Laboral: Auxiliar de Inventarios en Bodega Central (2022 - 2025). Control de entradas y salidas físicas de mercancía en almacén.',
+    experience: ['Auxiliar de Inventarios | Bodega Central | 2022 - 2025 | Control físico de entradas y salidas en almacén.']
+  };
+  const fakeEval = calculateStrictFitScore(fakeObjectiveCand, btpVacancy);
+  assert(fakeEval.hasDomainMismatch === true && fakeEval.fitScore <= 22, `Mención aspiracional ("Interés en aprender SAP BTP") NO debe generar falso positivo (<= 22%, obtenido: ${fakeEval.fitScore}%)`);
+
+  const cohCand: Partial<Candidate> = {
+    id: 'cand-coherency-1',
+    name: 'Sofía Consultora',
+    resumeText: 'Experiencia: Consultora Product Owner en TechCorp (2021 - 2025). Gestión de Product Backlog, definición de User Stories y ceremonias Scrum.',
+    experience: ['Consultora Product Owner | TechCorp | 2021 - 2025 | Product Backlog, User Stories y Scrum con Jira.']
+  };
+  const poWithMissingSkill: Partial<Vacancy> = {
+    ...poVacancy,
+    requirements: ['Product Backlog y User Stories', 'Metodología Scrum', 'Integración SAP S/4HANA CPI']
+  };
+  const cohEval = calculateStrictFitScore(cohCand, poWithMissingSkill);
+  assert(!!cohEval.breakdown && cohEval.breakdown.missingRequirements.some(m => /CPI/i.test(m)), 'Breakdown debe detectar brecha exacta en SAP S/4HANA CPI');
+  const cohQs = generateExperienceQuestions(poWithMissingSkill, cohCand, { seed: cohCand.id, precomputedAudit: cohEval.breakdown });
+  assert(cohQs.some(q => /CPI/i.test(q)), 'Primera pregunta de brecha en Double-Check debe alinear exactamente con la brecha detectada en el Score');
+
   console.log(`\n==================================================`);
   console.log(`RESULTADO SUITE DE PRUEBAS: ${passed} Pasadas | ${failed} Falladas`);
   console.log(`==================================================\n`);
+  if (typeof process !== 'undefined' && failed > 0) process.exit(1);
 
   return { passed, failed };
 }

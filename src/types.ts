@@ -6,6 +6,38 @@ export interface FitBreakdown {
   experience: number;
 }
 
+export interface EvaluationNote {
+  id: string;
+  timestamp: string;
+  author: string;
+  dimension: string;
+  outcome: 'Hired' | 'Rejected' | 'Note';
+  delta: number;
+  comment: string;
+  reverted?: boolean;
+}
+
+export interface FitScoreRequirementAudit {
+  req: string;
+  source: 'experience' | 'certifications' | 'education' | 'resume';
+}
+
+export interface FitScoreBreakdown {
+  cvBaseScore: number;
+  doubleCheckDelta: number;
+  manualFeedbackDelta: number;
+  finalScore: number;
+  matchedRequirements: FitScoreRequirementAudit[];
+  missingRequirements: string[];
+  domainAffinityScore?: number;
+  seniorityScore?: number;
+  reqsScore?: number;
+  englishScore?: number;
+  hasDomainMismatch?: boolean;
+  mismatchReason?: string;
+  recalculatedAt?: string;
+}
+
 export interface Candidate {
   id: string;
   name: string;
@@ -48,6 +80,11 @@ export interface Candidate {
   detectedGuidanceLevel?: string;
   guidanceAlert?: boolean;
   guidanceGapDetails?: string;
+  cvBaseScore?: number;
+  doubleCheckDelta?: number;
+  manualFeedbackDelta?: number;
+  fitScoreBreakdown?: FitScoreBreakdown;
+  evaluationNotes?: EvaluationNote[];
 }
 
 

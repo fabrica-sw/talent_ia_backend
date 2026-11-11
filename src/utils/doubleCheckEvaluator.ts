@@ -146,11 +146,11 @@ const GENERIC_PHRASES: RegExp[] = [
 ];
 const EVASIVE = /^(no|si|sí|ok|n\/a|na|ninguna|ninguno|no aplica|no se|no sé|sin comentarios|pendiente|x|-+|\.+)$/;
 const NEGATES_EXPERIENCE = /\b(no tengo|no cuento con|sin experiencia|nunca he|no he (trabajado|usado|manejado)|desconozco|no conozco)\b/;
-const ACTION_VERBS = /\b(lidere|implemente|negocie|cerre|gestione|desarrolle|configure|disene|coordine|logre|incremente|aumente|reduje|presente|prospecte|administre|migre|automatice|capacite|dirigi|ejecute|construi|elabore|analice|resolvi|converti|atendi|supervise|planifique|defini|optimice|vendi|coloque|consegui|abri|recupere)\b/g;
-const OUTCOME = /\b(resultado|logr|increment|aument|reduj|reduc|crecimiento|ahorr|cumpl|cuota|meta|objetivo|cierre|cerr|gane|ganamos|rentabil|margen|conversion|retencion|satisfaccion)/;
-const CONTEXT = /\b(cuando|en el proyecto|en la empresa|el cliente|un cliente|la cuenta|el reto|el problema|la situacion|en \d{4}|durante)\b/;
-const METRIC = /(\d[\d.,]*\s*(%|por ciento|mdp|millones?|mil\b|k\b|usd|mxn|pesos|clientes|cuentas|proyectos|personas|usuarios|consultores|meses|anos|semanas|oportunidades|propuestas|contratos))|(\$\s?\d)/;
-const TOOLS = /\b(salesforce|hubspot|zoho|dynamics|pipedrive|monday|sap|s\/?4|ecc|excel|power ?bi|tableau|jira|confluence|linkedin sales navigator|sales navigator|oracle|netsuite|odoo|crm|erp|sql|python|react|typescript|git)\b/;
+const ACTION_VERBS = /\b(?:lidere|lidero|liderado|liderando|implemente|implemento|implementado|implementando|implementamos|negocie|negocio|negociado|negociando|cerre|cerro|cerrado|cerrando|gestione|gestiono|gestionado|gestionando|desarrolle|desarrollo|desarrollado|desarrollando|configure|configuro|configurado|configurando|disene|diseno|disenado|disenando|coordine|coordino|coordinado|coordinando|logre|logro|logrado|logramos|incremente|incremento|incrementado|incrementando|aumente|aumento|aumentado|aumentando|reduje|redujo|reducido|reduciendo|presente|presento|presentado|prospecte|prospecto|prospectado|prospectando|administre|administro|administrado|administrando|migre|migro|migrado|migrando|automatice|automatizo|automatizado|automatizando|capacite|capacito|capacitado|capacitando|dirigi|dirigio|dirigido|dirigiendo|ejecute|ejecuto|ejecutado|ejecutando|construi|construyo|construido|construyendo|elabore|elaboro|elaborado|elaborando|analice|analizo|analizado|analizando|resolvi|resolvio|resuelto|resolviendo|converti|convirtio|convertido|atendi|atendio|atendido|atendiendo|supervise|superviso|supervisado|supervisando|planifique|planifico|planificado|defini|definio|definido|definiendo|optimice|optimizo|optimizado|optimizando|vendi|vendio|vendido|coloque|consegui|abri|recupere|participe|participo|participado|participando)\b/g;
+const OUTCOME = /\b(resultado|logr|increment|aument|reduj|reduc|crecimiento|ahorr|cumpl|cuota|meta|objetivo|cierre|cerr|gane|ganamos|rentabil|margen|conversion|retencion|satisfaccion|estabilidad|disponibilidad|eficiencia|uptime)/;
+const CONTEXT = /\b(cuando|en el proyecto|en la empresa|el cliente|un cliente|la cuenta|el reto|el problema|la situacion|en \d{4}|durante|en mi puesto|con el equipo|con el cliente|para la empresa|en produccion|go-live|rollout|implementacion)\b/;
+const METRIC = /(\d[\d.,]*\s*(%|por ciento|mdp|millones?|mil\b|k\b|usd|mxn|pesos|clientes|cuentas|proyectos|personas|usuarios|consultores|meses|anos|semanas|oportunidades|propuestas|contratos|interfaces|tickets|horas|dias))|(\$\s?\d)/;
+const TOOLS = /\b(salesforce|hubspot|zoho|dynamics|pipedrive|monday|sap|s\/?4|ecc|fiori|btp|cpi|abap|basis|hana|solman|grc|excel|power ?bi|tableau|jira|confluence|linkedin sales navigator|sales navigator|oracle|netsuite|odoo|crm|erp|sql|python|react|typescript|git|aws|azure|gcp|docker|kubernetes|linux|node|power automate|servicenow|service now|zendesk)\b/;
 
 const Q_STOP = new Set(['describe', 'cuentanos', 'cuenta', 'experiencia', 'resultado', 'concreto', 'concreta', 'situacion', 'tienes', 'tuviste',
   'hiciste', 'exactamente', 'medible', 'obtuviste', 'cuales', 'como', 'para', 'donde', 'desde', 'hasta', 'sobre', 'entre', 'este', 'esta',
@@ -194,13 +194,17 @@ export function evaluateExperienceAnswer(index: number, question: string, answer
   const req = reqMatch ? reqMatch[1] : '';
 
   if (!answer) {
-    return { ...base, score: 0, breakdown: { sustancia: 0, pertinencia: 0, evidencia: 0, estructura: 0, penalizacion: 0 }, flags: ['Sin respuesta.'], critical: true,
-      followUp: req ? `Solicitar respuesta sobre "${req}" con un ejemplo concreto.` : 'Solicitar respuesta con un ejemplo concreto.' };
+    return {
+      ...base, score: 0, breakdown: { sustancia: 0, pertinencia: 0, evidencia: 0, estructura: 0, penalizacion: 0 }, flags: ['Sin respuesta.'], critical: true,
+      followUp: req ? `Solicitar respuesta sobre "${req}" con un ejemplo concreto.` : 'Solicitar respuesta con un ejemplo concreto.'
+    };
   }
   if (EVASIVE.test(a.replace(/[.!¡¿?]/g, '').trim()) || words <= 3) {
-    return { ...base, score: 3, breakdown: { sustancia: 0, pertinencia: 0, evidencia: 0, estructura: 0, penalizacion: 0 },
+    return {
+      ...base, score: 3, breakdown: { sustancia: 0, pertinencia: 0, evidencia: 0, estructura: 0, penalizacion: 0 },
       flags: [`Respuesta evasiva o de ${words} palabra(s): "${answer.slice(0, 60)}".`], critical: true,
-      followUp: 'Repetir la pregunta en entrevista exigiendo un caso real con contexto, acción y resultado.' };
+      followUp: 'Repetir la pregunta en entrevista exigiendo un caso real con contexto, acción y resultado.'
+    };
   }
 
   // Sustancia
@@ -351,11 +355,11 @@ export function extractWorkStabilityAndEducation(resumeText: string = ''): {
   educationSummary: string;
 } {
   const norm = normalizeText(resumeText);
-  
+
   // Detección de periodos y duraciones en años
   const yearMatches = [...norm.matchAll(/\b(20\d{2}|19\d{2})\s*[-a]\s*(20\d{2}|19\d{2}|presente|actual)\b/g)];
   const tenureMatches = [...norm.matchAll(/(\d+(?:\.\d+)?)\s*(anos|años|years|meses|months)\b/g)];
-  
+
   let totalYears = 0;
   let jobCount = 0;
 
@@ -429,7 +433,7 @@ export function evaluateDoubleCheck(input: { questions: DCQuestion[]; vacancy: D
   const missingAvail = availability.filter(a => a.status === 'faltante').length;
 
   const base = Math.max(0, Math.min(100, Math.round(input.baseScore || 0)));
-  
+
   // Cálculo Multidimensional del Fit Score
   // 50% Calidad Técnica/Experiencia + 30% Fit Requisitos Base + 20% Estabilidad Laboral
   let rawMultidimensionalFit = Math.round((experienceQuality * 0.50) + (base * 0.30) + (stabilityScore * 0.20));
@@ -478,7 +482,7 @@ export function evaluateDoubleCheck(input: { questions: DCQuestion[]; vacancy: D
   lines.push('#### 🗓️ Disponibilidad y Condiciones Salariales:');
   availability.forEach(i => lines.push(`* **${i.label}:** ${i.status === 'ok' ? '✓' : i.status === 'incompatible' ? '✗' : '⚠'} ${i.detail}`));
   lines.push('');
-  
+
   const conclusion: Record<Verdict, string> = {
     'APROBADO PARA ENTREVISTA': 'Las respuestas son específicas, verificables y coherentes con los 3 últimos empleos. Se recomienda proceder a entrevista.',
     'APROBADO CON RESERVAS': 'Sustento parcial en respuestas. Proceder a entrevista validando las brechas o incompatibilidades señaladas.',

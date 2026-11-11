@@ -380,6 +380,11 @@ async function runMigrations(client: pg.PoolClient) {
       ADD COLUMN IF NOT EXISTS detected_guidance_level TEXT,
       ADD COLUMN IF NOT EXISTS is_starred BOOLEAN DEFAULT FALSE,
       ADD COLUMN IF NOT EXISTS tags TEXT[] DEFAULT '{}',
+      ADD COLUMN IF NOT EXISTS cv_base_score INTEGER,
+      ADD COLUMN IF NOT EXISTS double_check_delta INTEGER DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS manual_feedback_delta INTEGER DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS fit_score_breakdown JSONB DEFAULT '{}'::jsonb,
+      ADD COLUMN IF NOT EXISTS evaluation_notes JSONB DEFAULT '[]'::jsonb,
       ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP;
     `);
     // Columnas de texto libre que venían como VARCHAR(20/50/100/255): un nivel de inglés o una
@@ -581,6 +586,55 @@ async function runMigrations(client: pg.PoolClient) {
   }
 }
 
+function clampScore(val: number, min = 0, max = 100): number {
+  return Math.max(min, Math.min(max, Math.round(Number(val) || 0)));
+}
+
+function parseEvaluationNotesFromLegacyComments(comments: string): any[] {
+  if (!comments || !comments.trim()) return [];
+  const notes: any[] = [];
+  const lines = comments.split('\n').map(l => l.trim()).filter(Boolean);
+  lines.forEach((line, idx) => {
+    const deltaMatch = line.match(/([+-]\d+)\s*pts\)/i);
+    const isNoteTag = /^\[Nota\s+Informativa/i.test(line);
+    const isFav = !isNoteTag && /\b(Favorable|Contratado)\b/i.test(line);
+    const isDesfav = !isNoteTag && /\b(Desfavorable|Rechazado|Brecha Cr[ií]tica)\b/i.test(line);
+    let delta = 0;
+    if (deltaMatch) {
+      delta = parseInt(deltaMatch[1], 10);
+    } else if (!isNoteTag && (/\[Retroalimentaci[oó]n/i.test(line) || isFav || isDesfav)) {
+      if (isFav) delta = 8;
+      else if (isDesfav) delta = -10;
+    }
+    const outcome = delta > 0 ? 'Hired' : delta < 0 ? 'Rejected' : 'Note';
+    const dimMatch = line.match(/^\[([^|\]]+)\s*\|/);
+    const dimension = dimMatch ? dimMatch[1].trim() : 'Evaluación Histórica';
+    notes.push({
+      id: `legacy-${idx}-${Math.abs(line.length)}`,
+      timestamp: new Date().toISOString(),
+      author: 'Evaluador Histórico',
+      dimension,
+      outcome,
+      delta,
+      comment: line.replace(/^\[[^\]]+\]\s*/, '').trim() || line,
+      reverted: false
+    });
+  });
+  return notes;
+}
+
+function computeManualFeedbackDelta(notes: any[]): number {
+  if (!Array.isArray(notes)) return 0;
+  const raw = notes
+    .filter(n => n && !n.reverted && typeof n.delta === 'number')
+    .reduce((s, n) => s + n.delta, 0);
+  return clampScore(raw, -35, 25);
+}
+
+function composeFinalCandidateScore(cvBaseScore: number, doubleCheckDelta = 0, manualFeedbackDelta = 0): number {
+  return clampScore(Math.round(cvBaseScore) + Math.round(doubleCheckDelta) + Math.round(manualFeedbackDelta), 0, 100);
+}
+
 async function recalibrateAllCandidateScores(client: pg.PoolClient) {
   try {
     const vacRows = (await client.query(`SELECT * FROM vacancies`)).rows;
@@ -644,12 +698,39 @@ async function recalibrateAllCandidateScores(client: pg.PoolClient) {
       const analyticalSummary = synthesizeAnalyticalCandidateSummary(candObj, linkedVac);
       const guidance = computeGuidanceForCandidate(candObj, linkedVac);
 
-      // Preserve legitimate post-interview feedback delta ONLY if the candidate has explicit feedback comments
-      // and is not a domain/healthcare mismatch or severe ±2 seniority lock
-      const hasFeedbackAdjustment = /\[Retroalimentación/i.test(r.comments || '');
-      const targetFitScore = (hasFeedbackAdjustment && !strictEval.hasDomainMismatch && !strictEval.hasSeniorityGap && typeof r.fit_score === 'number')
-        ? r.fit_score
-        : strictEval.fitScore;
+      const cvBaseScore = strictEval.fitScore;
+      const existingNotes = parseJsonField(r.evaluation_notes, []);
+      const evaluationNotes = (Array.isArray(existingNotes) && existingNotes.length > 0)
+        ? existingNotes
+        : parseEvaluationNotesFromLegacyComments(r.comments || '');
+      const manualDelta = computeManualFeedbackDelta(evaluationNotes);
+
+      let dcDelta = Number(r.double_check_delta);
+      if (!Number.isFinite(dcDelta)) dcDelta = 0;
+      if (dcDelta === 0 && r.double_check_report && /Ajuste Multidimensional:\s*([+-]?\d+)\s*pts/i.test(r.double_check_report)) {
+        const m = r.double_check_report.match(/Ajuste Multidimensional:\s*([+-]?\d+)\s*pts/i);
+        if (m) dcDelta = clampScore(parseInt(m[1], 10), -40, 15);
+      }
+
+      // Respeta candados críticos de dominio/salud; si es perfil válido, preserva deltas de Double-Check y comentarios estructurados
+      const targetFitScore = (strictEval.hasDomainMismatch && cvBaseScore <= 22)
+        ? cvBaseScore
+        : composeFinalCandidateScore(cvBaseScore, dcDelta, manualDelta);
+
+      const breakdown = {
+        ...(strictEval.breakdown || {
+          cvBaseScore,
+          matchedRequirements: [],
+          missingRequirements: [],
+          hasDomainMismatch: strictEval.hasDomainMismatch,
+          mismatchReason: strictEval.mismatchReason
+        }),
+        cvBaseScore,
+        doubleCheckDelta: dcDelta,
+        manualFeedbackDelta: manualDelta,
+        finalScore: targetFitScore,
+        recalculatedAt: new Date().toISOString()
+      };
 
       await client.query(
         `UPDATE candidates SET
@@ -659,19 +740,28 @@ async function recalibrateAllCandidateScores(client: pg.PoolClient) {
           summary = $3,
           fit_score = $4,
           initial_fit_score = $5,
-          strengths = $6,
-          growths = $7,
-          detected_guidance_level = $8,
-          experience = $9,
-          education = $10,
-          certifications = $11
-        WHERE id = $12`,
+          cv_base_score = $5,
+          double_check_delta = $6,
+          manual_feedback_delta = $7,
+          fit_score_breakdown = $8,
+          evaluation_notes = $9,
+          strengths = $10,
+          growths = $11,
+          detected_guidance_level = $12,
+          experience = $13,
+          education = $14,
+          certifications = $15
+        WHERE id = $16`,
         sanitizeForPg([
           cleanedName,
           JSON.stringify(dynamicComp),
           analyticalSummary,
           targetFitScore,
-          strictEval.initialFitScore,
+          cvBaseScore,
+          dcDelta,
+          manualDelta,
+          JSON.stringify(breakdown),
+          JSON.stringify(evaluationNotes),
           strictEval.strengths,
           strictEval.growths,
           guidance.candidate.level,
@@ -2133,7 +2223,12 @@ function mapCandidateRow(row: any) {
     englishLevel: row.english_level ?? undefined,
     detectedGuidanceLevel: row.detected_guidance_level ?? undefined,
     isStarred: !!row.is_starred,
-    tags: row.tags || []
+    tags: row.tags || [],
+    cvBaseScore: row.cv_base_score ?? row.initial_fit_score ?? row.fit_score,
+    doubleCheckDelta: Number(row.double_check_delta) || 0,
+    manualFeedbackDelta: Number(row.manual_feedback_delta) || 0,
+    fitScoreBreakdown: parseJsonField(row.fit_score_breakdown, undefined),
+    evaluationNotes: parseJsonField(row.evaluation_notes, [])
   };
 }
 
@@ -2280,16 +2375,20 @@ app.post("/api/candidates/submit-screening", aiQuotaRateLimiter, async (req, res
     salaryRange: vacancy?.salaryRange, modalidad: vacancy?.modalidad
   };
   const cand = { name: candidateName, resumeText: resumeText || candidate?.resumeText || '', experience: candidate?.experience || [] };
-  // Base = encaje del CV antes del Double-Check. En el portal público aún no existe: se calcula del CV.
-  let baseScore = Number(candidate?.initialFitScore ?? candidate?.fitScore);
+  // Base = encaje objetivo del CV antes del Double-Check (nunca se contamina con comentarios o scores previos).
+  let baseScore = Number(candidate?.cvBaseScore ?? candidate?.initialFitScore);
   if (!Number.isFinite(baseScore) || baseScore <= 0) {
     baseScore = runLocalHeuristicAnalysis(candidateName, cand.resumeText, vac.title, vac).fitScore;
   }
+  const manualDelta = Number(candidate?.manualFeedbackDelta) || computeManualFeedbackDelta(candidate?.evaluationNotes || []);
   const result = evaluateDoubleCheck({ questions: qa, vacancy: vac, candidate: cand, baseScore });
   let report = result.report;
-  let fitScore = result.fitScore;
+  let doubleCheckFit = result.fitScore;
 
-  // Segunda opinión con IA (si hay Gemini): solo puede ENDURECER el resultado, nunca suavizarlo.
+  // Segunda opinión con IA (si hay Gemini): calibración bidireccional acotada [-25, +15] cuando las respuestas tienen sustancia real
+  const avgExpWords = result.answers.length
+    ? result.answers.reduce((sum, a) => sum + (a.words || 0), 0) / result.answers.length
+    : 0;
   const client = getGeminiClient(req.headers['x-gemini-api-key'] as string);
   if (client) {
     try {
@@ -2302,17 +2401,27 @@ Devuelve SOLO JSON: {"quality": <0-100>, "critique": "<máx 3 frases, en españo
       const response = await client.models.generateContent({ model: GEMINI_MODEL, contents: prompt });
       const ai = JSON.parse(cleanGeminiJson(response.text || '{}'));
       const aiQuality = Number(ai.quality);
-      if (Number.isFinite(aiQuality) && aiQuality < result.experienceQuality) {
-        const aiFit = Math.max(0, result.baseScore + Math.max(-40, Math.min(6, Math.round((aiQuality - 70) * 0.6))));
-        fitScore = Math.min(fitScore, aiFit);
+      if (Number.isFinite(aiQuality)) {
+        const clampedAiQuality = avgExpWords >= 12
+          ? Math.max(result.experienceQuality - 25, Math.min(result.experienceQuality + 15, aiQuality))
+          : Math.min(result.experienceQuality, aiQuality);
+        const aiDelta = Math.max(-40, Math.min(12, Math.round((clampedAiQuality - 70) * 0.55)));
+        const aiFit = clampScore(result.baseScore + aiDelta, 0, 100);
+        if (aiQuality < result.experienceQuality) {
+          doubleCheckFit = Math.min(doubleCheckFit, aiFit);
+        } else if (avgExpWords >= 15 && clampedAiQuality > result.experienceQuality && result.verdict !== 'NO APROBADO') {
+          doubleCheckFit = Math.max(doubleCheckFit, aiFit);
+        }
       }
       if (ai.critique) report += `\n\nSegunda revisión (IA, ${Number.isFinite(aiQuality) ? aiQuality + '/100' : 's/c'}): ${fixCorruptedAccents(String(ai.critique))}`;
     } catch (gemErr) {
       console.warn("Gemini double-check (segunda opinión) no disponible:", gemErr);
     }
   }
-  if (fitScore !== result.fitScore) {
-    report = report.replace(/Encaje con la vacante: .*$/m, `Encaje con la vacante: ${result.baseScore}% → ${fitScore}% (${fitScore - result.baseScore >= 0 ? '+' : ''}${fitScore - result.baseScore} pts, ajustado por la revisión de IA)`);
+  const doubleCheckDelta = clampScore(doubleCheckFit - result.baseScore, -40, 15);
+  const fitScore = composeFinalCandidateScore(result.baseScore, doubleCheckDelta, manualDelta);
+  if (doubleCheckFit !== result.fitScore) {
+    report = report.replace(/Score Consolidado de Encaje: .*$/m, `Score Consolidado de Encaje: ${fitScore}% (Base CV: ${result.baseScore}% | Ajuste Double-Check: ${doubleCheckDelta >= 0 ? '+' : ''}${doubleCheckDelta} pts | Comentarios: ${manualDelta >= 0 ? '+' : ''}${manualDelta} pts)`);
   }
 
   const followUps = result.answers.filter(a => a.followUp).map(a => {
@@ -2320,11 +2429,23 @@ Devuelve SOLO JSON: {"quality": <0-100>, "critique": "<máx 3 frases, en españo
     return f.charAt(0).toUpperCase() + f.slice(1);
   });
   const growths = [...new Set([...(candidate?.growths || []), ...result.criticalFlags.map(f => `Double-Check — ${f}`)])].slice(0, 6);
+  const updatedBreakdown = {
+    ...(candidate?.fitScoreBreakdown || {}),
+    cvBaseScore: result.baseScore,
+    doubleCheckDelta,
+    manualFeedbackDelta: manualDelta,
+    finalScore: fitScore,
+    recalculatedAt: new Date().toISOString()
+  };
   return res.json({
     verdict: result.verdict,
     quality: result.quality,
     fitScore,
     baseScore: result.baseScore,
+    cvBaseScore: result.baseScore,
+    doubleCheckDelta,
+    manualFeedbackDelta: manualDelta,
+    fitScoreBreakdown: updatedBreakdown,
     doubleCheckReport: report,
     evaluation: { answers: result.answers, availability: result.availability },
     screeningQuestions: qa.map((x, i) => ({ id: i + 1, question: x.question, answer: x.answer })),
@@ -2365,11 +2486,13 @@ app.patch("/api/candidates/:id/schedule", async (req, res) => {
   }
 });
 
-// Endpoint: Retroalimentación de Contratación (Comentarios para incrementar el score & Aprendizaje continuo IA)
+// Endpoint: Retroalimentación Estructurada de Candidato (Comentarios con ajuste acotado y bitácora auditable)
 app.post(["/api/submit-feedback", "/submit-feedback"], async (req, res) => {
-  const { candidateId, outcome, feedbackComments, comments, competencies } = req.body || {};
+  const { candidateId, outcome, feedbackComments, comments, competencies, scoreAdjustment, updateStage } = req.body || {};
   const cId = candidateId || req.body?.id;
   const feedbackText = String(feedbackComments || comments || '').trim();
+  const actor = (req as AuthenticatedRequest).user;
+  const authorName = actor?.nombre || actor?.email || 'Reclutador / Evaluador';
 
   // Actualizar pesos de aprendizaje continuo si se envían competencias o un dictamen
   try {
@@ -2385,9 +2508,9 @@ app.post(["/api/submit-feedback", "/submit-feedback"], async (req, res) => {
         currentWeights[key] = Math.max(0.5, Math.min(2.0, Number(currentWeights[key])));
       }
       await saveLearningWeights(currentWeights);
-    } else if (outcome) {
+    } else if (outcome && outcome !== 'Note') {
       const learningRate = 0.05;
-      const factor = (outcome === 'Hired' || outcome === 'Contratado') ? 1.05 : 0.95;
+      const factor = (outcome === 'Hired' || outcome === 'Contratado' || outcome === 'Favorable') ? 1.05 : 0.95;
       for (const key of keys) {
         currentWeights[key] = currentWeights[key] * (1 - learningRate) + (currentWeights[key] * factor) * learningRate;
         currentWeights[key] = Math.max(0.5, Math.min(2.0, Number(currentWeights[key])));
@@ -2420,92 +2543,137 @@ app.post(["/api/submit-feedback", "/submit-feedback"], async (req, res) => {
     return res.status(404).json({ error: "Candidato no encontrado" });
   }
 
-  const currentScore = Number(candidate.fitScore) || 75;
-  let boost = 0;
+  const prevScore = Number(candidate.fitScore) || 0;
+  const cvBaseScore = Number(candidate.cvBaseScore ?? candidate.initialFitScore ?? prevScore) || 50;
+  const dcDelta = Number(candidate.doubleCheckDelta) || 0;
 
-  const negativeKeywords = /\b(no domina|no cuenta|no cumple|no tiene|deficiente|bajo nivel|inadecuado|rechaz|descart|reasign|brecha|insuficiente|fall|fallo|debilidad|no apto|falta|carece|sin experiencia|no sabe|poco apego|regular|dudas|insegur|no convence|desfase|requiere capacitaci|descartar|rechazado|desfavorable)\b/i;
-  const positiveKeywords = /\b(adecuad[oa]s?|iniciativa|aprend(er|e|izaje)?|capacita(r|se|ci[oó]n)?|aut[oó]nom[oa]s?|an[aá]lisi?s|viabl?e?s?|potencial|alinea(n|do|da|das|dos)?|inter[eé]s|actitud|compromis[oa]|proactiv[oa]s?|correct[oa]s?|satisfactori[oa]s?|favorable(mente)?|apto|cumple|buen[oa]s?|destac[ao]|excelent[es]?|avanz[ao]|competent[es]?|recomend(able|ado)?|aprobado|contratado|sobresaliente|domina|favorable)\b/i;
+  // Quitar frases negadas positivas ("sin brechas", "no falta experiencia") antes de evaluar keywords si no hay outcome explícito
+  const textForKeywordCheck = feedbackText.replace(/\b(?:sin|no\s+hay|ningun[ao]?|cero)\s+(?:brechas?|faltas?|dudas?|debilidades?|problemas?)\b/gi, '');
+  const negativeKeywords = /\b(no domina|no cuenta|no cumple|no tiene|deficiente|bajo nivel|inadecuado|rechaz|descart|reasign|brecha|insuficiente|fallo|debilidad|no apto|falta|carece|sin experiencia|no sabe|poco apego|no convence|desfase|requiere capacitaci|desfavorable)\b/i;
+  const positiveKeywords = /\b(adecuad[oa]s?|iniciativa|aut[oó]nom[oa]s?|potencial|inter[eé]s|compromis[oa]|proactiv[oa]s?|satisfactori[oa]s?|favorable(mente)?|apto|cumple|buen[oa]s?|destac[ao]|excelent[es]?|competent[es]?|recomend(able|ado)?|aprobado|contratado|sobresaliente|domina)\b/i;
 
   const isExplicitFeedback = feedbackText.length >= 8;
-  const isExplicitOutcome = outcome === 'Hired' || outcome === 'Contratado' || outcome === 'Favorable' || outcome === 'Rejected' || outcome === 'Rechazado' || outcome === 'Desfavorable' || outcome === 'Note';
-  const isRejected = outcome === 'Rejected' || outcome === 'Rechazado' || outcome === 'Desfavorable' || candidate.stage === 'Rechazado';
-  const isHired = outcome === 'Hired' || outcome === 'Contratado' || outcome === 'Favorable' || candidate.stage === 'Contratado';
   const isNote = outcome === 'Note';
+  const isRejected = outcome === 'Rejected' || outcome === 'Rechazado' || outcome === 'Desfavorable';
+  const isHired = outcome === 'Hired' || outcome === 'Contratado' || outcome === 'Favorable';
 
-  const hasNegativeText = isExplicitFeedback && negativeKeywords.test(feedbackText);
-  const hasPositiveText = isExplicitFeedback && positiveKeywords.test(feedbackText);
-
-  if (isNote || (!isExplicitFeedback && !isExplicitOutcome)) {
-    // Nota informativa o sin contenido sustancial: 0 pts
-    boost = 0;
-  } else if (isExplicitOutcome) {
-    if (isHired) {
-      boost = currentScore <= 45 ? +15 : +8;
-    } else if (isRejected) {
-      boost = -10;
-    } else {
-      boost = 0;
-    }
-  } else if (hasNegativeText) {
-    boost = -10;
-  } else if (hasPositiveText) {
-    boost = currentScore <= 45 ? +15 : +8;
-  } else {
-    boost = 0;
+  let noteDelta = 0;
+  if (isNote) {
+    noteDelta = 0;
+  } else if (typeof scoreAdjustment === 'number' && Number.isFinite(scoreAdjustment)) {
+    noteDelta = clampScore(scoreAdjustment, -15, 15);
+  } else if (isHired) {
+    noteDelta = +8;
+  } else if (isRejected) {
+    noteDelta = -10;
+  } else if (isExplicitFeedback && negativeKeywords.test(textForKeywordCheck)) {
+    noteDelta = -10;
+  } else if (isExplicitFeedback && positiveKeywords.test(textForKeywordCheck)) {
+    noteDelta = +8;
   }
 
-  let newScore = Math.min(98, Math.max(15, currentScore + boost));
-  if (isRejected && (outcome === 'Rejected' || outcome === 'Rechazado') && newScore > 40) {
-    newScore = 38;
-  }
+  const existingNotes = Array.isArray(candidate.evaluationNotes) && candidate.evaluationNotes.length > 0
+    ? [...candidate.evaluationNotes]
+    : parseEvaluationNotesFromLegacyComments(candidate.comments || '');
+
+  const timestamp = new Date().toISOString();
+  const dimension = String(req.body?.dimension || 'Evaluación de Perfil').trim();
+  const normalizedOutcome: 'Hired' | 'Rejected' | 'Note' = noteDelta > 0 ? 'Hired' : noteDelta < 0 ? 'Rejected' : 'Note';
+  const scoreChangeLabel = noteDelta > 0 ? `+${noteDelta}` : `${noteDelta}`;
+  const outcomeLabel = noteDelta > 0 ? `Favorable (${scoreChangeLabel} pts)` : noteDelta < 0 ? `Brecha (${scoreChangeLabel} pts)` : 'Nota Informativa (0 pts)';
+
+  const newNote = {
+    id: `note-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+    timestamp,
+    author: authorName,
+    dimension,
+    outcome: normalizedOutcome,
+    delta: noteDelta,
+    comment: feedbackText || 'Evaluación ejecutiva completada.',
+    reverted: false
+  };
+  const updatedNotes = [...existingNotes, newNote];
+  const manualFeedbackDelta = computeManualFeedbackDelta(updatedNotes);
+  const newScore = composeFinalCandidateScore(cvBaseScore, dcDelta, manualFeedbackDelta);
+  const effectiveDelta = newScore - prevScore;
 
   // Ajuste dinámico de competencias evaluadas según retroalimentación
   if (candidate.competencies) {
-    if (isRejected || hasNegativeText) {
-      candidate.competencies['Habilidades Técnicas'] = Math.max(30, (Number(candidate.competencies['Habilidades Técnicas']) || 75) - 10);
-      candidate.competencies['Resolución de Problemas'] = Math.max(30, (Number(candidate.competencies['Resolución de Problemas']) || 75) - 8);
-    } else if (isHired || hasPositiveText) {
-      candidate.competencies['Habilidades Técnicas'] = Math.min(98, (Number(candidate.competencies['Habilidades Técnicas']) || 75) + 8);
-      candidate.competencies['Comunicación'] = Math.min(98, (Number(candidate.competencies['Comunicación']) || 75) + 6);
+    if (noteDelta < 0) {
+      candidate.competencies['Habilidades Técnicas'] = Math.max(30, (Number(candidate.competencies['Habilidades Técnicas']) || 75) - 6);
+      candidate.competencies['Resolución de Problemas'] = Math.max(30, (Number(candidate.competencies['Resolución de Problemas']) || 75) - 5);
+    } else if (noteDelta > 0) {
+      candidate.competencies['Habilidades Técnicas'] = Math.min(98, (Number(candidate.competencies['Habilidades Técnicas']) || 75) + 5);
+      candidate.competencies['Comunicación'] = Math.min(98, (Number(candidate.competencies['Comunicación']) || 75) + 4);
     }
   }
 
-  const timestamp = new Date().toISOString();
-  const outcomeLabel = isHired ? 'Favorable (+8 pts)' : isRejected ? 'Desfavorable (-10 pts)' : (boost === 0 ? 'Nota Informativa' : 'Comentarios');
-  const dimensionPrefix = (req.body?.dimension) ? `${req.body.dimension} | ` : '';
-  const scoreChangeLabel = boost > 0 ? `+${boost}` : `${boost}`;
-  const feedbackEntry = `[${dimensionPrefix}${outcomeLabel}] ${feedbackText || 'Evaluación ejecutiva completada.'} (Score: ${currentScore}% -> ${newScore}%, ${scoreChangeLabel} pts)`;
-
+  const feedbackEntry = `[${dimension} | ${outcomeLabel}] ${feedbackText || 'Evaluación ejecutiva completada.'} (Score: ${prevScore}% -> ${newScore}%, ${effectiveDelta >= 0 ? '+' : ''}${effectiveDelta} pts)`;
   const updatedComments = candidate.comments ? `${candidate.comments}\n${feedbackEntry}` : feedbackEntry;
+  const shouldMoveStage = updateStage === true && (outcome === 'Hired' || outcome === 'Rejected' || outcome === 'Contratado' || outcome === 'Rechazado');
+  const nextStage = shouldMoveStage
+    ? ((outcome === 'Hired' || outcome === 'Contratado') ? 'Contratado' : 'Rechazado')
+    : candidate.stage;
+
   const history = Array.isArray(candidate.history) ? [...candidate.history] : [];
   history.push({
     timestamp,
-    stage: isHired ? 'Contratado' : isRejected ? 'Rechazado' : candidate.stage,
-    user: 'Retroalimentación de Entrevista',
+    stage: nextStage,
+    user: `${authorName} (Evaluación)`,
     details: feedbackEntry
   });
 
+  const updatedBreakdown = {
+    ...(candidate.fitScoreBreakdown || {}),
+    cvBaseScore,
+    doubleCheckDelta: dcDelta,
+    manualFeedbackDelta,
+    finalScore: newScore,
+    recalculatedAt: timestamp
+  };
+
   candidate.fitScore = newScore;
+  candidate.cvBaseScore = cvBaseScore;
+  candidate.doubleCheckDelta = dcDelta;
+  candidate.manualFeedbackDelta = manualFeedbackDelta;
+  candidate.fitScoreBreakdown = updatedBreakdown;
+  candidate.evaluationNotes = updatedNotes;
   candidate.comments = updatedComments;
   candidate.history = history;
-  if (isHired) {
-    candidate.stage = 'Contratado';
-  } else if (isRejected && candidate.stage !== 'Rechazado') {
-    candidate.stage = 'Rechazado';
-  }
+  candidate.stage = nextStage;
 
   if (useDbFallback) {
     saveDiskCandidates(mockCandidates);
   } else {
     try {
-      const nextStage = isHired ? 'Contratado' : isRejected ? 'Rechazado' : null;
       await pool.query(`
         UPDATE candidates
-        SET fit_score = $1, comments = $2, history = $3, stage = COALESCE($4, stage), competencies = $5, updated_at = CURRENT_TIMESTAMP
-        WHERE id = $6
-      `, [newScore, updatedComments, JSON.stringify(history), nextStage, JSON.stringify(candidate.competencies || {}), cId]);
+        SET fit_score = $1,
+            cv_base_score = $2,
+            manual_feedback_delta = $3,
+            fit_score_breakdown = $4,
+            evaluation_notes = $5,
+            comments = $6,
+            history = $7,
+            stage = $8,
+            competencies = $9,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = $10
+      `, sanitizeForPg([
+        newScore,
+        cvBaseScore,
+        manualFeedbackDelta,
+        JSON.stringify(updatedBreakdown),
+        JSON.stringify(updatedNotes),
+        updatedComments,
+        JSON.stringify(history),
+        nextStage,
+        JSON.stringify(candidate.competencies || {}),
+        cId
+      ]));
     } catch (err) {
       console.error("Error guardando feedback en DB:", err);
+      return res.status(500).json({ error: "No se pudo guardar el comentario en base de datos" });
     }
   }
 
@@ -2514,9 +2682,73 @@ app.post(["/api/submit-feedback", "/submit-feedback"], async (req, res) => {
     success: true, 
     candidate, 
     newScore, 
-    boostApplied: boost, 
-    message: `Feedback registrado exitosamente. Score actualizado a ${newScore}% (${scoreChangeLabel} pts)` 
+    boostApplied: effectiveDelta,
+    manualFeedbackDelta,
+    message: `Evaluación registrada. Score actualizado a ${newScore}% (${effectiveDelta >= 0 ? '+' : ''}${effectiveDelta} pts)` 
   });
+});
+
+// Endpoint para revertir un ajuste manual previo de comentario/evaluación manteniendo trazabilidad
+app.post("/api/candidates/:id/notes/:noteId/revert", authenticateToken(useDbFallback ? null : pool), async (req, res) => {
+  const { id, noteId } = req.params;
+  const actor = (req as AuthenticatedRequest).user;
+  const authorName = actor?.nombre || actor?.email || 'Evaluador';
+
+  try {
+    let candidate: any = null;
+    if (useDbFallback) {
+      candidate = mockCandidates.find(c => c.id === id);
+    } else {
+      const r = await pool.query("SELECT * FROM candidates WHERE id = $1", [id]);
+      if (r.rows.length > 0) candidate = mapCandidateRow(r.rows[0]);
+    }
+    if (!candidate) return res.status(404).json({ error: "Candidato no encontrado" });
+
+    const notes = Array.isArray(candidate.evaluationNotes) ? [...candidate.evaluationNotes] : [];
+    const targetIdx = notes.findIndex((n: any) => n && n.id === noteId);
+    if (targetIdx === -1) return res.status(404).json({ error: "Nota de evaluación no encontrada" });
+
+    notes[targetIdx] = { ...notes[targetIdx], reverted: !notes[targetIdx].reverted };
+    const cvBaseScore = Number(candidate.cvBaseScore ?? candidate.initialFitScore ?? candidate.fitScore) || 50;
+    const dcDelta = Number(candidate.doubleCheckDelta) || 0;
+    const manualFeedbackDelta = computeManualFeedbackDelta(notes);
+    const newScore = composeFinalCandidateScore(cvBaseScore, dcDelta, manualFeedbackDelta);
+    const updatedBreakdown = {
+      ...(candidate.fitScoreBreakdown || {}),
+      cvBaseScore,
+      doubleCheckDelta: dcDelta,
+      manualFeedbackDelta,
+      finalScore: newScore,
+      recalculatedAt: new Date().toISOString()
+    };
+
+    const history = Array.isArray(candidate.history) ? [...candidate.history] : [];
+    history.push({
+      timestamp: new Date().toISOString(),
+      stage: candidate.stage,
+      user: `${authorName} (Auditoría)`,
+      details: `${notes[targetIdx].reverted ? 'Revertido' : 'Restaurado'} ajuste (${notes[targetIdx].delta >= 0 ? '+' : ''}${notes[targetIdx].delta} pts) de nota "${notes[targetIdx].dimension}". Score actual: ${newScore}%.`
+    });
+
+    candidate.evaluationNotes = notes;
+    candidate.manualFeedbackDelta = manualFeedbackDelta;
+    candidate.fitScore = newScore;
+    candidate.fitScoreBreakdown = updatedBreakdown;
+    candidate.history = history;
+
+    if (useDbFallback) {
+      saveDiskCandidates(mockCandidates);
+    } else {
+      await pool.query(
+        `UPDATE candidates SET fit_score = $1, manual_feedback_delta = $2, fit_score_breakdown = $3, evaluation_notes = $4, history = $5, updated_at = CURRENT_TIMESTAMP WHERE id = $6`,
+        sanitizeForPg([newScore, manualFeedbackDelta, JSON.stringify(updatedBreakdown), JSON.stringify(notes), JSON.stringify(history), id])
+      );
+    }
+    return res.json({ success: true, candidate, newScore, manualFeedbackDelta });
+  } catch (err: any) {
+    console.error("Error revirtiendo nota de evaluación:", err);
+    return res.status(500).json({ error: "Error al revertir ajuste", detail: err.code });
+  }
 });
 
 // Admin Endpoint: Limpiar Base de Datos (Candidates & Vacancies)
@@ -2600,8 +2832,8 @@ app.post("/api/candidates", async (req, res) => {
   }
 
   const sqlQuery = `
-    INSERT INTO candidates (id, name, email, phone, resume_text, stage, competencies, fit_score, initial_fit_score, summary, strengths, growths, recommended_questions, suggested_time, channel, vacancy_id, screening_questions, double_check_report, interview_speech, experience, education, certifications, history, comments, expected_salary, english_level, detected_guidance_level, is_starred, tags, updated_at)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, CURRENT_TIMESTAMP)
+    INSERT INTO candidates (id, name, email, phone, resume_text, stage, competencies, fit_score, initial_fit_score, cv_base_score, double_check_delta, manual_feedback_delta, fit_score_breakdown, evaluation_notes, summary, strengths, growths, recommended_questions, suggested_time, channel, vacancy_id, screening_questions, double_check_report, interview_speech, experience, education, certifications, history, comments, expected_salary, english_level, detected_guidance_level, is_starred, tags, updated_at)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, CURRENT_TIMESTAMP)
     ON CONFLICT (id) DO UPDATE SET
       name = EXCLUDED.name,
       email = EXCLUDED.email,
@@ -2611,6 +2843,11 @@ app.post("/api/candidates", async (req, res) => {
       competencies = EXCLUDED.competencies,
       fit_score = EXCLUDED.fit_score,
       initial_fit_score = EXCLUDED.initial_fit_score,
+      cv_base_score = EXCLUDED.cv_base_score,
+      double_check_delta = EXCLUDED.double_check_delta,
+      manual_feedback_delta = EXCLUDED.manual_feedback_delta,
+      fit_score_breakdown = EXCLUDED.fit_score_breakdown,
+      evaluation_notes = EXCLUDED.evaluation_notes,
       summary = EXCLUDED.summary,
       strengths = EXCLUDED.strengths,
       growths = EXCLUDED.growths,
@@ -2635,11 +2872,17 @@ app.post("/api/candidates", async (req, res) => {
     RETURNING *
   `;
 
+  const initBaseScore = c.cvBaseScore ?? c.initialFitScore ?? c.fitScore ?? 0;
   const queryParams = sanitizeForPg([
     c.id, c.name, c.email || '', c.phone || '', c.resumeText || '', c.stage || 'Filtrado',
     JSON.stringify(sanitizeForPg(c.competencies || {})),
     c.fitScore || 0,
-    c.initialFitScore || c.fitScore || 0,
+    initBaseScore,
+    initBaseScore,
+    Number(c.doubleCheckDelta) || 0,
+    Number(c.manualFeedbackDelta) || 0,
+    JSON.stringify(sanitizeForPg(c.fitScoreBreakdown || {})),
+    JSON.stringify(sanitizeForPg(c.evaluationNotes || [])),
     c.summary || '',
     toTextArray(c.strengths) || [],
     toTextArray(c.growths) || [],
@@ -2921,13 +3164,19 @@ app.delete("/api/candidates/:id", async (req, res) => {
 });
 
 // Toma hasta 3 preguntas de la IA que sean relevantes para la vacante y completa con el motor local.
-function pickExperienceQuestions(aiQuestions: any, vacancy: any, candidate: { name?: string; resumeText?: string; experience?: string[] }, seed: string): string[] {
+function pickExperienceQuestions(
+  aiQuestions: any,
+  vacancy: any,
+  candidate: { name?: string; resumeText?: string; experience?: string[]; education?: string[]; certifications?: string[] },
+  seed: string,
+  precomputedAudit?: any
+): string[] {
   const vac = { title: vacancy?.title, department: vacancy?.department, requirements: vacancy?.requirements || [] };
   const relevant = (Array.isArray(aiQuestions) ? aiQuestions : [])
     .filter((q: any) => typeof q === 'string' && q.trim().length > 15 && isQuestionRelevant(q, vac))
     .slice(0, 3);
   if (relevant.length >= 3) return relevant;
-  const filler = generateExperienceQuestions(vac, candidate, { seed, exclude: relevant });
+  const filler = generateExperienceQuestions(vac, candidate, { seed, exclude: relevant, precomputedAudit });
   return [...relevant, ...filler].slice(0, 3);
 }
 
@@ -3093,6 +3342,16 @@ app.patch("/api/candidates/:id", async (req, res) => {
     const finalEducationParam = autoResolvedCv ? autoResolvedCv.education : (education !== undefined ? (safeEducation || null) : null);
     const finalCertificationsParam = autoResolvedCv ? autoResolvedCv.certifications : (certifications !== undefined ? (safeCertifications || null) : null);
 
+    const incomingDcDelta = body.doubleCheckDelta !== undefined && body.doubleCheckDelta !== null
+      ? clampScore(Number(body.doubleCheckDelta), -40, 15)
+      : null;
+    const incomingCvBase = body.cvBaseScore !== undefined && body.cvBaseScore !== null
+      ? clampScore(Number(body.cvBaseScore), 0, 100)
+      : null;
+    const incomingBreakdown = body.fitScoreBreakdown && typeof body.fitScoreBreakdown === 'object'
+      ? JSON.stringify(body.fitScoreBreakdown)
+      : null;
+
     const result = await pool.query(
       `UPDATE candidates SET 
         name = COALESCE($1, name),
@@ -3122,8 +3381,11 @@ app.patch("/api/candidates/:id", async (req, res) => {
         is_starred = COALESCE($25, is_starred),
         tags = COALESCE($26::text[], tags),
         suggested_time = COALESCE($27, suggested_time),
+        double_check_delta = COALESCE($28, double_check_delta),
+        cv_base_score = COALESCE($29, cv_base_score),
+        fit_score_breakdown = COALESCE($30, fit_score_breakdown),
         updated_at = CURRENT_TIMESTAMP
-      WHERE id = $28 RETURNING *`,
+      WHERE id = $31 RETURNING *`,
       sanitizeForPg([
         name !== undefined ? name : null,
         email !== undefined ? email : null,
@@ -3152,6 +3414,9 @@ app.patch("/api/candidates/:id", async (req, res) => {
         typeof isStarred === 'boolean' ? isStarred : null,
         toTextArray(tags),
         suggestedTime !== undefined ? suggestedTime : null,
+        incomingDcDelta,
+        incomingCvBase,
+        incomingBreakdown,
         id
       ])
     );
@@ -3162,14 +3427,28 @@ app.patch("/api/candidates/:id", async (req, res) => {
 
     if (!targetVacId && (safeVacancyId === null || stage === 'Pool')) {
       const strictPool = calculateStrictFitScore(
-        { name: updatedCandidate.name, resumeText: resumeTextToUse, summary: updatedCandidate.summary, experience: updatedCandidate.experience },
+        { name: updatedCandidate.name, resumeText: resumeTextToUse, summary: updatedCandidate.summary, experience: updatedCandidate.experience, education: updatedCandidate.education, certifications: updatedCandidate.certifications },
         undefined
       );
+      const poolManualDelta = Number(updatedCandidate.manual_feedback_delta) || computeManualFeedbackDelta(parseJsonField(updatedCandidate.evaluation_notes, []));
+      const poolScore = composeFinalCandidateScore(strictPool.fitScore, 0, poolManualDelta);
+      const poolBreakdown = {
+        ...(strictPool.breakdown || {}),
+        cvBaseScore: strictPool.fitScore,
+        doubleCheckDelta: 0,
+        manualFeedbackDelta: poolManualDelta,
+        finalScore: poolScore,
+        recalculatedAt: new Date().toISOString()
+      };
       await pool.query(
-        `UPDATE candidates SET fit_score = $1, initial_fit_score = COALESCE(initial_fit_score, $1), stage = 'Pool', vacancy_id = NULL WHERE id = $2`,
-        [strictPool.fitScore, id]
+        `UPDATE candidates SET fit_score = $1, initial_fit_score = $2, cv_base_score = $2, double_check_delta = 0, fit_score_breakdown = $3, stage = 'Pool', vacancy_id = NULL WHERE id = $4`,
+        [poolScore, strictPool.fitScore, JSON.stringify(poolBreakdown), id]
       );
-      updatedCandidate.fit_score = strictPool.fitScore;
+      updatedCandidate.fit_score = poolScore;
+      updatedCandidate.cv_base_score = strictPool.fitScore;
+      updatedCandidate.initial_fit_score = strictPool.fitScore;
+      updatedCandidate.double_check_delta = 0;
+      updatedCandidate.fit_score_breakdown = poolBreakdown;
       updatedCandidate.stage = 'Pool';
       updatedCandidate.vacancy_id = null;
     } else if (targetVacId && (targetVacId !== oldVacId || req.body.forceRegenerate)) {
@@ -3272,13 +3551,6 @@ Por favor, como experto en Atracción de Capital Humano, realiza un filtrado y a
           evalResult = runLocalHeuristicAnalysis(updatedCandidate.name, updatedCandidate.resume_text || "", vacancy.title, targetVacancy);
         }
 
-        // Las preguntas de IA solo se aceptan si tienen relación con la vacante; si no, el motor las completa.
-        evalResult.recommendedQuestions = pickExperienceQuestions(
-          evalResult.recommendedQuestions, targetVacancy,
-          { name: updatedCandidate.name, resumeText: resumeTextToUse, experience: updatedCandidate.experience || [] },
-          `${id}|${targetVacancy.title}|${Date.now()}`
-        );
-
         const resolvedForVac = resolveAndNormalizeCandidateCvProfile({
           name: updatedCandidate.name,
           resumeText: resumeTextToUse,
@@ -3299,44 +3571,81 @@ Por favor, como experto en Atracción de Capital Humano, realiza un filtrado y a
           certifications: resolvedForVac.certifications
         };
 
-        // Calibración determinista estricta contra la vacante asignada (100% invariante con el optimizador cruzado)
+        // Calibración determinista estricta contra la vacante asignada (fuente única de verdad para Score y Preguntas)
         const strictEval = calculateStrictFitScore(candForStrict, targetVacancy);
         const dynamicCompetencies = calculateCandidateCompetencies(candForStrict, targetVacancy);
         const analyticalSummary = synthesizeAnalyticalCandidateSummary(candForStrict, targetVacancy);
         const guidanceInfo = computeGuidanceForCandidate(candForStrict, targetVacancy);
 
-        const calibratedScore = strictEval.fitScore;
-        const newInitialFit = isNewVac ? calibratedScore : (origCandidate.initial_fit_score ?? calibratedScore);
+        // Preguntas coherentes con el mismo cruce exacto de requisitos (precomputedAudit) y perfil normalizado
+        const existingScreening = parseJsonField(updatedCandidate.screening_questions, []) as { question?: string; answer?: string }[];
+        const hasCapturedAnswers = existingScreening.some(q => q?.answer && String(q.answer).trim());
+        const nextRecommendedQuestions = (!hasCapturedAnswers || isNewVac)
+          ? pickExperienceQuestions(
+              evalResult.recommendedQuestions,
+              targetVacancy,
+              candForStrict,
+              `${id}|${targetVacancy.title}|${Date.now()}`,
+              strictEval.breakdown
+            )
+          : (updatedCandidate.recommended_questions || []);
+        const nextScreeningQuestions = (!hasCapturedAnswers || isNewVac)
+          ? buildScreeningQuestions(nextRecommendedQuestions)
+          : existingScreening;
+
+        const existingManualDelta = Number(updatedCandidate.manual_feedback_delta) || computeManualFeedbackDelta(parseJsonField(updatedCandidate.evaluation_notes, []));
+        const nextDcDelta = isNewVac ? 0 : (Number(updatedCandidate.double_check_delta) || 0);
+        const cvBaseScore = strictEval.fitScore;
+        const calibratedScore = (strictEval.hasDomainMismatch && cvBaseScore <= 22)
+          ? cvBaseScore
+          : composeFinalCandidateScore(cvBaseScore, nextDcDelta, existingManualDelta);
+        const newInitialFit = cvBaseScore;
 
         const finalStrengths = strictEval.strengths.length > 0 ? strictEval.strengths : (evalResult.strengths || []);
         const finalGrowths = strictEval.growths.length > 0 ? strictEval.growths : (evalResult.growths || []);
+        const nextBreakdown = {
+          ...(strictEval.breakdown || {}),
+          cvBaseScore,
+          doubleCheckDelta: nextDcDelta,
+          manualFeedbackDelta: existingManualDelta,
+          finalScore: calibratedScore,
+          recalculatedAt: new Date().toISOString()
+        };
 
         const updateEval = await pool.query(
           `UPDATE candidates SET 
             competencies = $1,
             fit_score = $2,
             initial_fit_score = $3,
-            summary = $4,
-            strengths = $5,
-            growths = $6,
-            recommended_questions = $7,
-            suggested_time = $8,
-            screening_questions = $9,
-            detected_guidance_level = $10,
-            experience = $11,
-            education = $12,
-            certifications = $13
-          WHERE id = $14 RETURNING *`,
+            cv_base_score = $3,
+            double_check_delta = $4,
+            fit_score_breakdown = $5,
+            summary = $6,
+            strengths = $7,
+            growths = $8,
+            recommended_questions = $9,
+            suggested_time = $10,
+            screening_questions = $11,
+            double_check_report = CASE WHEN $12 THEN NULL ELSE double_check_report END,
+            interview_speech = CASE WHEN $12 THEN NULL ELSE interview_speech END,
+            detected_guidance_level = $13,
+            experience = $14,
+            education = $15,
+            certifications = $16
+          WHERE id = $17 RETURNING *`,
           sanitizeForPg([
             JSON.stringify(dynamicCompetencies),
             calibratedScore,
             newInitialFit,
+            nextDcDelta,
+            JSON.stringify(nextBreakdown),
             analyticalSummary,
             finalStrengths,
             finalGrowths,
-            evalResult.recommendedQuestions,
+            nextRecommendedQuestions,
             "", // Se elimina sugerencia de hora simulada
-            JSON.stringify(buildScreeningQuestions(evalResult.recommendedQuestions || [])),
+            JSON.stringify(nextScreeningQuestions),
+            isNewVac,
             guidanceInfo.candidate.level,
             resolvedForVac.experience,
             resolvedForVac.education,
@@ -4890,7 +5199,17 @@ function runLocalHeuristicAnalysis(name: string, resumeText: string, candidateRo
   const vacTitle = targetVacancy?.title || candidateRole || 'Consultor / Especialista';
   const vacDept = targetVacancy?.department || '';
   const vacReqs = targetVacancy?.requirements || [];
-  const questions: string[] = generateExperienceQuestions({ title: vacTitle, department: vacDept, requirements: vacReqs }, { name, resumeText }, { seed: `${name}|${vacTitle}` });
+  const questions: string[] = generateExperienceQuestions(
+    { title: vacTitle, department: vacDept, requirements: vacReqs },
+    {
+      name: cleanName,
+      resumeText,
+      experience: structuredData.experience,
+      education: structuredData.education,
+      certifications: structuredData.certifications
+    },
+    { seed: `${cleanName}|${vacTitle}`, precomputedAudit: strictResult.breakdown }
+  );
 
   // Usar las fortalezas y áreas de oportunidad concretas obtenidas del cruce CV vs Requisitos de Vacante
   const strengths = strictResult.strengths && strictResult.strengths.length > 0
@@ -4910,6 +5229,11 @@ function runLocalHeuristicAnalysis(name: string, resumeText: string, candidateRo
 
   return {
     fitScore: strictResult.fitScore,
+    initialFitScore: strictResult.fitScore,
+    cvBaseScore: strictResult.fitScore,
+    doubleCheckDelta: 0,
+    manualFeedbackDelta: 0,
+    fitScoreBreakdown: strictResult.breakdown,
     competencies: {
       'Liderazgo': leadershipScore,
       'Comunicación': communicationScore,
@@ -5117,6 +5441,11 @@ IMPORTANTE: El sistema ha aprendido de las decisiones anteriores de contratació
     const guidanceCheck = computeGuidanceForCandidate(candForCalibration, effectiveVacancy);
 
     aiResult.fitScore = strictCheck.fitScore;
+    aiResult.initialFitScore = strictCheck.fitScore;
+    aiResult.cvBaseScore = strictCheck.fitScore;
+    aiResult.doubleCheckDelta = 0;
+    aiResult.manualFeedbackDelta = 0;
+    aiResult.fitScoreBreakdown = strictCheck.breakdown;
     aiResult.competencies = dynamicComp;
     aiResult.summary = analyticalSum;
     aiResult.strengths = strictCheck.strengths.length > 0 ? strictCheck.strengths : (aiResult.strengths || []);
@@ -5125,10 +5454,18 @@ IMPORTANTE: El sistema ha aprendido de las decisiones anteriores de contratació
     aiResult.hasDomainMismatch = strictCheck.hasDomainMismatch;
     aiResult.mismatchReason = strictCheck.mismatchReason;
 
-    // Solo se aceptan preguntas de la IA relacionadas con la vacante; el motor local completa las 3.
+    // Solo se aceptan preguntas de la IA relacionadas con la vacante; el motor local completa las 3 usando el mismo cruce exacto de requisitos.
     aiResult.recommendedQuestions = pickExperienceQuestions(
       aiResult.recommendedQuestions, effectiveVacancy || { title: candidateRole },
-      { name, resumeText, experience: aiResult.experience || [] }, `${name}|${effectiveVacancy?.title || candidateRole}`
+      {
+        name: candForCalibration.name,
+        resumeText,
+        experience: aiResult.experience || [],
+        education: aiResult.education || [],
+        certifications: aiResult.certifications || []
+      },
+      `${name}|${effectiveVacancy?.title || candidateRole}`,
+      strictCheck.breakdown
     );
     res.json(aiResult);
   } catch (error) {
