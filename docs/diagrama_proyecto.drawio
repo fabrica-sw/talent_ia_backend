@@ -38,7 +38,7 @@
         <mxCell id="p2_ai" value="&lt;b&gt;Análisis Semántico IA&lt;/b&gt;&lt;br&gt;Gemini / OpenAI / Claude&lt;br&gt;&lt;font style=&quot;font-size: 9px;&quot; color=&quot;#475569&quot;&gt;Temp 0.1 + Fallback Heurístico&lt;br&gt;(extractStructuredCvDataFromText)&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fffbeb;strokeColor=#d97706;fontColor=#1e293b;fontSize=10;" vertex="1" parent="lane2">
           <mxGeometry x="20" y="150" width="210" height="80" as="geometry" />
         </mxCell>
-        <mxCell id="p2_canon" value="&lt;b&gt;Normalizador Canónico&lt;/b&gt;&lt;br&gt;canonicalCvNormalizer.ts&lt;br&gt;&lt;font style=&quot;font-size: 9px;&quot; color=&quot;#1e3a8a&quot;&gt;- Trayectoria (últimos 3 empleos)&lt;br&gt;- Educación (Grado | Institución | Periodo)&lt;br&gt;- Certificaciones y sinopsis ejecutiva&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eff6ff;strokeColor=#1d4ed8;fontColor=#1e293b;fontSize=10;" vertex="1" parent="lane2">
+        <mxCell id="p2_canon" value="&lt;b&gt;Normalizador Canónico&lt;/b&gt;&lt;br&gt;canonicalCvNormalizer.ts&lt;br&gt;&lt;font style=&quot;font-size: 9px;&quot; color=&quot;#1e3a8a&quot;&gt;- resolveAndNormalizeCandidateCvProfile&lt;br&gt;- detectDegradedCvFields (Histórico + Nuevo)&lt;br&gt;- Trayectoria, Educación y Certificaciones&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eff6ff;strokeColor=#1d4ed8;fontColor=#1e293b;fontSize=10;" vertex="1" parent="lane2">
           <mxGeometry x="20" y="260" width="210" height="105" as="geometry" />
         </mxCell>
 
@@ -46,13 +46,13 @@
         <mxCell id="lane3" value="3. EVALUACIÓN DETERMINISTA" style="swimlane;whiteSpace=wrap;html=1;fillColor=#f8fafc;strokeColor=#103268;fontColor=#103268;fontSize=11;fontStyle=1;startSize=26;" vertex="1" parent="1">
           <mxGeometry x="570" y="95" width="265" height="440" as="geometry" />
         </mxCell>
-        <mxCell id="p3_score" value="&lt;b&gt;Motor FitScore 4D&lt;/b&gt;&lt;br&gt;vacancyUtils.ts&lt;br&gt;&lt;font style=&quot;font-size: 9px;&quot; color=&quot;#334155&quot;&gt;Dominio 40% | Seniority 30%&lt;br&gt;Requisitos 20% | Inglés 10%&lt;br&gt;Alerta isRoleLocked (&amp;plusmn;2 niveles)&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#103268;fontColor=#1e293b;fontSize=10;" vertex="1" parent="lane3">
+        <mxCell id="p3_score" value="&lt;b&gt;Score Descompuesto 4D&lt;/b&gt;&lt;br&gt;vacancyUtils.ts&lt;br&gt;&lt;font style=&quot;font-size: 9px;&quot; color=&quot;#334155&quot;&gt;cvBase + dcDelta + manualDelta&lt;br&gt;auditCandidateRequirements (por sección)&lt;br&gt;Trazabilidad JSONB &amp;amp; candado &amp;plusmn;2 niveles&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#103268;fontColor=#1e293b;fontSize=10;" vertex="1" parent="lane3">
           <mxGeometry x="20" y="45" width="225" height="90" as="geometry" />
         </mxCell>
-        <mxCell id="p3_q" value="&lt;b&gt;Generador de Reactivos&lt;/b&gt;&lt;br&gt;questionEngine.ts&lt;br&gt;&lt;font style=&quot;font-size: 9px;&quot; color=&quot;#334155&quot;&gt;3 Preguntas por Brecha Real (Vacante &amp;setminus; CV)&lt;br&gt;+ 4 Fijas Disponibilidad / Salario&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#1d4ed8;fontColor=#1e293b;fontSize=10;" vertex="1" parent="lane3">
+        <mxCell id="p3_q" value="&lt;b&gt;Generador de Reactivos&lt;/b&gt;&lt;br&gt;questionEngine.ts&lt;br&gt;&lt;font style=&quot;font-size: 9px;&quot; color=&quot;#334155&quot;&gt;3 Preguntas por Brecha Real (mismo audit)&lt;br&gt;+ 4 Fijas Disponibilidad / Salario&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#1d4ed8;fontColor=#1e293b;fontSize=10;" vertex="1" parent="lane3">
           <mxGeometry x="20" y="160" width="225" height="85" as="geometry" />
         </mxCell>
-        <mxCell id="p3_dc" value="&lt;b&gt;Rúbrica Double-Check&lt;/b&gt;&lt;br&gt;doubleCheckEvaluator.ts&lt;br&gt;&lt;font style=&quot;font-size: 9px;&quot; color=&quot;#334155&quot;&gt;Sustancia, Pertinencia, Evidencia, STAR&lt;br&gt;Veredicto + Control Salarial (+10%)&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eff6ff;strokeColor=#1d4ed8;fontColor=#1e293b;fontSize=10;" vertex="1" parent="lane3">
+        <mxCell id="p3_dc" value="&lt;b&gt;Rúbrica Double-Check&lt;/b&gt;&lt;br&gt;doubleCheckEvaluator.ts&lt;br&gt;&lt;font style=&quot;font-size: 9px;&quot; color=&quot;#334155&quot;&gt;Conjugaciones ES + Calibración IA [-25,+15]&lt;br&gt;Persiste double_check_delta sobre Base CV&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eff6ff;strokeColor=#1d4ed8;fontColor=#1e293b;fontSize=10;" vertex="1" parent="lane3">
           <mxGeometry x="20" y="270" width="225" height="90" as="geometry" />
         </mxCell>
 
@@ -66,7 +66,7 @@
         <mxCell id="p4_cal" value="&lt;b&gt;Agenda de Entrevistas&lt;/b&gt;&lt;br&gt;CalendarPanel / InviteModal&lt;br&gt;&lt;font style=&quot;font-size: 9px;&quot; color=&quot;#334155&quot;&gt;Sincronización de citas y notificaciones&lt;br&gt;vía n8n (/webhook/candidato-entrevista)&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#16a34a;fontColor=#1e293b;fontSize=10;" vertex="1" parent="lane4">
           <mxGeometry x="20" y="155" width="210" height="80" as="geometry" />
         </mxCell>
-        <mxCell id="p4_hire" value="&lt;b&gt;Feedback Manager &amp;amp; Cierre&lt;/b&gt;&lt;br&gt;Pipeline Kanban / Dashboard&lt;br&gt;&lt;font style=&quot;font-size: 9px;&quot; color=&quot;#15803d&quot;&gt;Retroalimentación controlada + Estado CONTRATADO&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#16a34a;fontColor=#1e293b;fontSize=10;" vertex="1" parent="lane4">
+        <mxCell id="p4_hire" value="&lt;b&gt;Notas Estructuradas &amp;amp; Cierre&lt;/b&gt;&lt;br&gt;evaluation_notes[] / Kanban&lt;br&gt;&lt;font style=&quot;font-size: 9px;&quot; color=&quot;#15803d&quot;&gt;Ajuste manual con Reversión + Estado CONTRATADO&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#16a34a;fontColor=#1e293b;fontSize=10;" vertex="1" parent="lane4">
           <mxGeometry x="20" y="265" width="210" height="85" as="geometry" />
         </mxCell>
 
@@ -109,3 +109,4 @@
     </mxGraphModel>
   </diagram>
 </mxfile>
+

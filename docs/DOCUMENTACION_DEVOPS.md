@@ -54,9 +54,11 @@ npm test
 docker compose build --no-cache
 docker compose up -d
 
-# 3. Verificación de salud (Smoke Tests)
+# 3. Verificación de salud (Smoke Tests) y Rehidratación Histórica
 curl -sI http://localhost:8080/
 curl -s http://localhost:3000/api/health
+# Opcional con JWT ADMIN tras migraciones de esquema: rehidratar y recalibrar candidatos en BD
+curl -s -X POST -H "Authorization: Bearer <TOKEN_ADMIN>" http://localhost:3000/api/candidates/rehydrate-all
 docker logs --tail 100 -f eas-recruiting-backend
 
 # 4. Rollback rápido ante falla de imagen
@@ -79,3 +81,4 @@ pg_restore -h 10.10.10.103 -U n8n_user -d n8n_db --clean --if-exists backup_tale
 # Aplicación manual de esquema DDL en BD limpia
 psql -h 10.10.10.103 -U n8n_user -d n8n_db -f database_schema.sql
 ```
+

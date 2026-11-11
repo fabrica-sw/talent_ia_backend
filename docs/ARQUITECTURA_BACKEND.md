@@ -53,12 +53,12 @@ talent_ia_backend/
 |   \-- utils/
 |       |-- areas.ts                    # Taxonomía y normalización de áreas
 |       |-- auditLogger.ts              # Escritura inmutable en log_auditoria
-|       |-- canonicalCvNormalizer.ts    # Limpieza de experiencia, educación y ruido
-|       |-- doubleCheckEvaluator.ts     # Rúbrica determinista de 7 preguntas
-|       |-- questionEngine.ts           # Generador de reactivos por brecha real
+|       |-- canonicalCvNormalizer.ts    # Limpieza de experiencia, educación, ruido y detectDegradedCvFields
+|       |-- doubleCheckEvaluator.ts     # Rúbrica determinista de 7 preguntas (conjugaciones ES/EN y STAR)
+|       |-- questionEngine.ts           # Generador de reactivos + fuente única auditCandidateRequirements
 |       |-- securityUtils.ts            # Sanitización, hashes y reglas de sesión
 |       |-- textRepair.ts               # Reparación algorítmica de mojibake UTF-8
-|       |-- vacancyUtils.ts             # FitScore 4D y cálculo de nivel guía
+|       |-- vacancyUtils.ts             # FitScore 4D por secciones, nivel guía y fitScoreBreakdown
 |       \-- *.test.ts                   # Suites de pruebas unitarias de motores
 |-- docs/                               # Documentación oficial PDF y Draw.io
 |-- .env.example                        # Plantilla de variables sin secretos
@@ -83,7 +83,7 @@ El servidor inicializa un `pg.Pool` hacia `DATABASE_URL` con manejo de timeouts,
 1. **`auth_users`:** Almacena credenciales (`id UUID`, `email UNIQUE`, `password_hash` con bcrypt, `reset_code`, `reset_expires`, `raw_user_meta_data` JSONB).
 2. **`app_users`:** Sincronizada mediante el trigger `on_auth_user_created` (`handle_new_auth_user()`), registra perfiles operativos (`rol` en `'admin' | 'leader' | 'user' | 'director'`, `activo`, `primer_login`).
 3. **`vacancies`:** Perfiles de puesto, requisitos, años de experiencia, rango salarial, `min_competencies` JSONB, nivel de inglés y modalidad.
-4. **`candidates`:** Expedientes curriculares sanitizados en UTF-8 (`sanitizeUtf8` / `sanitizeForPg`), competencias JSONB, `fit_score`, `initial_fit_score`, `double_check_report`, `interview_speech` y etapa en el pipeline.
+4. **`candidates`:** Expedientes curriculares sanitizados en UTF-8 (`sanitizeUtf8` / `sanitizeForPg`), competencias JSONB, descomposición auditable de score (`cv_base_score`, `double_check_delta`, `manual_feedback_delta`, `fit_score_breakdown` JSONB), historial estructurado `evaluation_notes` JSONB, `fit_score` calculado por invariante `clamp(cv_base_score + double_check_delta + manual_feedback_delta, 0, 100)`, `double_check_report`, `interview_speech` y etapa en el pipeline.
 5. **`log_auditoria`:** Registro forense inmutable de eventos (`usuario_id`, `usuario_email`, `ip_address`, `accion`, `modulo`, `nivel`, `detalles` JSONB, `fecha`).
 
 ---
@@ -95,12 +95,14 @@ El servidor inicializa un `pg.Pool` hacia `DATABASE_URL` con manejo de timeouts,
 - **Cuentas Bootstrap Seguras:** El arranque verifica cuentas heredadas inseguras y únicamente aprovisiona administradores cuando las variables de entorno (`ADMIN_BOOTSTRAP_*` o `*_PASSWORD` de al menos 12 caracteres) están configuradas explícitamente en `.env` (sin contraseñas de respaldo en código fuente).
 - **Rutas Públicas Controladas:** Lista blanca `PUBLIC_API_ROUTES` en `server.ts` (`/api/health`, `/api/auth/*` públicos y `/api/careers/*`); toda ruta privada exige `Authorization: Bearer <token>`.
 
-### 5.2 Catálogo Principal de Rutas REST
+### 5.2 Catálogo Principal de Rutas REST y Pipeline Unificado de CV
 - `GET /api/health`: Diagnóstico de disponibilidad y conexión PostgreSQL.
 - `POST /api/auth/login`, `/api/auth/change-password`, `/api/auth/forgot-password`, `/api/auth/reset-password`: Ciclo de identidad y recuperación por PIN (vía `N8N_RECOVERY_EMAIL_WEBHOOK`).
 - `GET/POST/PUT/DELETE /api/vacancies`: Gestión de vacantes y recálculo de afinidad.
-- `GET/POST/PATCH/DELETE /api/candidates` y `/api/candidates/upload`: Carga múltiple PDF/DOCX, parsing IA (Gemini / OpenAI / Claude), normalización canónica y actualización de etapas.
-- `POST /api/candidates/:id/double-check`: Evaluación determinista de respuestas y generación de veredicto.
+- `GET/POST/PATCH/DELETE /api/candidates`, `/api/candidates/upload` y `POST /api/public/applications`: Ingestión unificada mediante `resolveAndNormalizeCandidateCvProfile` (re-extracción automática multi-columna/sin encabezado + `detectDegradedCvFields`).
+- `POST /api/candidates/rehydrate-all`: Endpoint administrativo para rehidratación y recalibración histórica completa sin pérdida de deltas de comentarios ni Double-Check (`recalibrateAllCandidateScores`).
+- `POST /api/candidates/submit-screening`: Evaluación crítica Double-Check bajo rúbrica STAR y calibración bidireccional IA acotada (`[-25, +15]`), persistiendo `double_check_delta`.
+- `POST /api/submit-feedback` y `POST /api/candidates/:id/notes/:noteId/revert`: Registro estructurado de comentarios en `evaluation_notes` con ajuste acotado (`manual_feedback_delta`) y reversión/restauración auditable sin sobreescribir el `cv_base_score`.
 - `GET /api/audit-logs`: Consulta de bitácora forense filtrable (exclusiva para administradores).
 
 ### 5.3 Integración Asíncrona con n8n (`n8n_workflow_eas_recruiting_master.json`)

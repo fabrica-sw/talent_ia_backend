@@ -41,7 +41,7 @@
           <mxGeometry x="25" y="38" width="530" height="52" as="geometry" />
         </mxCell>
 
-        <mxCell id="fe_components" value="&lt;b&gt;Componentes Modulares UI&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size: 9.5px;&quot; color=&quot;#334155&quot;&gt;- DashboardPanel (KPIs y Gráficos)&lt;br&gt;- CandidatePanel &amp;amp; FitGauge (Expediente CV)&lt;br&gt;- VacanciesPanel (Niveles Guía Homologados)&lt;br&gt;- CalendarPanel &amp;amp; InviteModal (Entrevistas)&lt;br&gt;- AdminPanel, AuditLogPanel &amp;amp; CareersPortal&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#cbd5e1;fontColor=#1e293b;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="group_frontend">
+        <mxCell id="fe_components" value="&lt;b&gt;Componentes Modulares UI&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size: 9.5px;&quot; color=&quot;#334155&quot;&gt;- DashboardPanel (KPIs y Gráficos)&lt;br&gt;- CandidatePanel (Trazabilidad Score, Notas y CV)&lt;br&gt;- VacanciesPanel (Niveles Guía Homologados)&lt;br&gt;- CalendarPanel &amp;amp; InviteModal (Entrevistas)&lt;br&gt;- AdminPanel, AuditLogPanel &amp;amp; CareersPortal&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#cbd5e1;fontColor=#1e293b;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="group_frontend">
           <mxGeometry x="25" y="105" width="255" height="115" as="geometry" />
         </mxCell>
 
@@ -74,7 +74,7 @@
           <mxGeometry x="340" y="96" width="305" height="90" as="geometry" />
         </mxCell>
 
-        <mxCell id="be_engines" value="&lt;b&gt;Motores Heurísticos Deterministas de Evaluación&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size: 9.5px;&quot; color=&quot;#334155&quot;&gt;&lt;b&gt;vacancyUtils.ts:&lt;/b&gt; FitScore 4D (Dominio 40%, Seniority 30%, Requisitos 20%, Inglés 10%) | 6 Niveles Guía Homologados&lt;br&gt;&lt;b&gt;canonicalCvNormalizer.ts &amp;amp; textRepair.ts:&lt;/b&gt; Purga de mojibake UTF-8, ruido de paginación y reubicación de verbos&lt;br&gt;&lt;b&gt;questionEngine.ts &amp;amp; doubleCheckEvaluator.ts:&lt;/b&gt; 7 reactivos situacionales por brecha real, rúbrica STAR y speech&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eff6ff;strokeColor=#1d4ed8;fontColor=#1e293b;fontSize=9.5;align=left;spacingLeft=10;" vertex="1" parent="group_backend">
+        <mxCell id="be_engines" value="&lt;b&gt;Motores Heurísticos Deterministas y Pipeline Unificado&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size: 9.5px;&quot; color=&quot;#334155&quot;&gt;&lt;b&gt;vacancyUtils + questionEngine:&lt;/b&gt; Fuente única auditCandidateRequirements | Score descompuesto (cvBase + dcDelta + fbDelta)&lt;br&gt;&lt;b&gt;canonicalCvNormalizer + textRepair:&lt;/b&gt; resolveAndNormalizeCandidateCvProfile, detectDegradedCvFields y migración histórica&lt;br&gt;&lt;b&gt;doubleCheckEvaluator &amp;amp; API:&lt;/b&gt; Calibración bidireccional IA [-25,+15], notas estructuradas con reversión y /rehydrate-all&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eff6ff;strokeColor=#1d4ed8;fontColor=#1e293b;fontSize=9.5;align=left;spacingLeft=10;" vertex="1" parent="group_backend">
           <mxGeometry x="25" y="196" width="620" height="74" as="geometry" />
         </mxCell>
 
@@ -95,7 +95,7 @@
           <mxGeometry x="25" y="42" width="280" height="72" as="geometry" />
         </mxCell>
 
-        <mxCell id="db_candidates" value="&lt;b&gt;Tabla: candidates&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size: 9px;&quot; color=&quot;#334155&quot;&gt;UUID, datos personales, CV raw, competencies JSONB, fit_score, double_check_report, interview_speech, stage&lt;/font&gt;" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=10;fillColor=#ffffff;strokeColor=#16a34a;fontColor=#1e293b;fontSize=9.5;" vertex="1" parent="group_database">
+        <mxCell id="db_candidates" value="&lt;b&gt;Tabla: candidates&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size: 9px;&quot; color=&quot;#334155&quot;&gt;UUID, CV raw, cv_base_score, double_check_delta, manual_feedback_delta, fit_score_breakdown JSONB, evaluation_notes JSONB, stage&lt;/font&gt;" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=10;fillColor=#ffffff;strokeColor=#16a34a;fontColor=#1e293b;fontSize=9.5;" vertex="1" parent="group_database">
           <mxGeometry x="330" y="42" width="280" height="72" as="geometry" />
         </mxCell>
 
