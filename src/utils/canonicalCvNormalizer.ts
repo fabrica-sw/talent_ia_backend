@@ -12,12 +12,15 @@ export function isActionPhrase(str: string): boolean {
          /^(en\s+impulsando|en\s+apoyando|para\s+que\s+los|a\s+fin\s+de|con\s+el\s+fin)\b/i.test(s);
 }
 
-export const BULLET_STRIP_REGEX = /^[•\-\*\d\.\)\s✓●▪\uF0B7\u25CF\u25AA\u25FE\u2022]+/;
+export const BULLET_STRIP_REGEX = /^(?:[•\*\u2022\u25CF\u25AA\u25FE✓●▪\uF0B7\s]*[•\*\u2022\u25CF\u25AA\u25FE✓●▪\uF0B7]\s*|[-–]\s+|(?:\d{1,2})[\.\)]\s+)/;
 
 export function stripBulletPoints(text: string): string {
   if (typeof text !== 'string') return '';
-  let s: string = text;
-  return s.replace(BULLET_STRIP_REGEX, '').trim();
+  let s: string = text.trim();
+  while (BULLET_STRIP_REGEX.test(s)) {
+    s = s.replace(BULLET_STRIP_REGEX, '').trim();
+  }
+  return s;
 }
 
 export function isLocationString(str: string): boolean {
@@ -39,7 +42,9 @@ export function cleanExecutiveDetails(rawDetails: string): string {
 
   let s = fixMojibakeEncoding(rawDetails);
 
-  // 1. Descartar viñetas Unicode y glifos iniciales/intermedios
+  // 1. Descartar viñetas Unicode y glifos iniciales/intermedios, y prefijo residual "Actividades: /"
+  s = s.replace(/^(?:actividades\s*:\s*\/?\s*)+/i, '').trim();
+  if (/^[\/\-–—\s\.:;]+$/.test(s)) return '';
   s = s.replace(/[\u2022\u25CF●•▪\uF0B7\u25AA\u25FE*✓✔]/g, '. ');
   s = stripBulletPoints(s);
 
@@ -138,14 +143,46 @@ export function normalizeCanonicalExperience(rawList: string[]): string[] {
     let position = parts[0] || '';
     let company = parts[1] || '';
     let period = parts[2] || '';
-    let details = parts.slice(3).join(' | ');
+    let details = parts.slice(3)
+      .map(p => p.replace(/(?:\bactividades\s*:\s*\/?\s*)+/gi, '').trim())
+      .filter(p => p && !/^[\/\-–—\s\.:;]+$/.test(p))
+      .join(' | ')
+      .trim();
 
-    // Caso: El puesto es un mes o un marcador temporal (ej: "Octubre", "Presente")
+    if (/^[\/\-–—\s\.:;]+$/.test(details)) details = '';
+
+    // Limpiar prefijo "Periodo: " en details si period ya viene o falta
+    const periodoDetailMatch = details.match(/^periodo\s*:\s*([^|]+)(?:\s*\|\s*)?/i);
+    if (periodoDetailMatch) {
+      if (!period || /periodo\s+(no\s+especificado|profesional)/i.test(period)) {
+        period = periodoDetailMatch[1].trim();
+      }
+      details = details.slice(periodoDetailMatch[0].length).replace(/(?:\bactividades\s*:\s*\/?\s*)+/gi, '').trim();
+    }
+
+    // Descartar registros puramente académicos infiltrados en experiencia (sin rol laboral real en el puesto)
+    const isAcademicOrg = /\b(facultad\s+de\s+estudios|facultad\s+de|escuela\s+superior|universidad\s+nacional|instituto\s+polit[eé]cnico)\b/i.test(position);
+    const hasWorkRoleKeyword = /\b(administrativo|auxiliar|becario|consultor|analista|desarrollador|ingeniero|gerente|coordinador|soporte|servicio\s+social|pr[aá]cticas|colaboradora)\b/i.test(position);
+    if (isAcademicOrg && !hasWorkRoleKeyword) {
+      continue;
+    }
+
+    // Caso: El puesto es un mes o un marcador temporal (ej: "Octubre", "Presente", "Actualidad")
     if (MONTHS_NAMES_REGEX.test(position) || TEMPORAL_MARKERS_REGEX.test(position)) {
-      if (!period || period.toLowerCase().includes('periodo')) {
+      if (period && !TEMPORAL_MARKERS_REGEX.test(period) && /^(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre|\d{4})/i.test(period)) {
+        period = `${period} - ${position}`;
+      } else if (!period || period.toLowerCase().includes('periodo')) {
         period = position;
       }
-      position = 'Consultor / Especialista Senior';
+      // Rescatar puesto/empresa si quedaron atrapados en details (ej: "SAP Basis. I Novis, SA de CV")
+      const embeddedCompMatch = details.match(/^([^.]+)\.\s*(?:[Il|]\s*)?([^|]+?(?:S\.?A\.?\s*de\s*C\.?V\.?|Inc\.?|Corp\.?|Consulting|Technologies|Group|Grupo)[^|]*)(?:\s*\|\s*(.*))?$/i);
+      if (embeddedCompMatch && company === 'Empresa del Sector Privado') {
+        position = embeddedCompMatch[1].trim();
+        company = embeddedCompMatch[2].trim();
+        details = embeddedCompMatch[3] ? embeddedCompMatch[3].trim() : '';
+      } else {
+        position = 'Consultor / Especialista Senior';
+      }
     }
 
     // Caso: La empresa es un mes o un marcador temporal (ej: "Presente")
@@ -217,8 +254,18 @@ export function normalizeCanonicalExperience(rawList: string[]): string[] {
 
     if (!position || isLocationString(position)) position = 'Consultor / Especialista Senior';
     if (!company) company = 'Empresa del Sector Privado';
-    if (!period || period.toLowerCase().includes('periodo profesional')) {
-      period = (parts.length >= 3 && parts[2]) ? parts[2] : 'Periodo profesional';
+    if (!period || /periodo\s+(profesional|no\s+especificado)/i.test(period)) {
+      period = (parts.length >= 3 && parts[2] && !/periodo\s+(profesional|no\s+especificado)/i.test(parts[2])) ? parts[2] : 'Periodo profesional';
+    }
+
+    // Corregir rangos de fechas invertidos (ej: "Mayo 2025 - Agosto 2020" -> "Agosto 2020 - Mayo 2025")
+    const invDateMatch = period.match(/^(.+?\b(20\d{2}|19\d{2})\b)\s*[-–—]\s*(.+?\b(20\d{2}|19\d{2})\b)$/i);
+    if (invDateMatch) {
+      const y1 = parseInt(invDateMatch[2], 10);
+      const y2 = parseInt(invDateMatch[4], 10);
+      if (y1 > y2) {
+        period = `${invDateMatch[3].trim()} - ${invDateMatch[1].trim()}`;
+      }
     }
 
     // Saneamiento de responsabilidades/logros bajo directriz ejecutiva EAS
@@ -271,6 +318,16 @@ export function normalizeCanonicalEducation(rawList: string[]): string[] {
     degree = stripJunkEdu(degree);
     institution = stripJunkEdu(institution);
     period = stripJunkEdu(period);
+
+    // Limpiar prefijos narrativos frecuentes en grados académicos
+    degree = degree.replace(/^(?:egres[eé]\s+de\s+la\s+carrera\s+de\s+|egresad[oa]\s+de\s+(?:la\s+carrera\s+de\s+)?|cursando\s+(?:la\s+carrera\s+de\s+)?|estudios\s+en\s+)/i, '').trim();
+
+    // Descartar registros netamente laborales infiltrados en educación (ej: "Grupo Mexgas | Analista BASIS JR")
+    const hasAcademicKeyword = /\b(licenciatura|ingenier[ií]a|ingeniero|maestr[ií]a|master|mba|doctorado|t[eé]cnico|tecnicatura|bachillerato|diplomado|especialidad|universidad|instituto|tecnol[oó]gico|facultad|escuela|college|school|unam|ipn|uam|itesm|uvm|unitec|polit[eé]cnica)\b/i.test(`${degree} ${institution}`);
+    const hasCorporateJobKeyword = /\b(analista|consultor|gerente|director|ejecutivo|desarrollador|becario|s\.?a\.?\s*de\s*c\.?v\.?|mexgas|urrea|softtek|globant|accenture|deloitte)\b/i.test(`${degree} ${institution}`);
+    if (!hasAcademicKeyword && hasCorporateJobKeyword) {
+      continue;
+    }
 
     // Si todo el elemento era basura de paginación
     if (!degree && !institution) continue;
@@ -368,4 +425,60 @@ export function validateAndNormalizeCanonicalCv<T extends {
     certifications: normalizeCanonicalCertifications(candidateData.certifications || []),
     summary: candidateData.summary ? fixMojibakeEncoding(candidateData.summary.trim()) : candidateData.summary
   };
+}
+
+/**
+ * Determina si un registro de candidato tiene trayectoria/educación vacía, genérica,
+ * sin normalizar o contaminada y requiere re-extracción + normalización desde resumeText.
+ */
+export function detectDegradedCvFields(input: {
+  experience?: string[];
+  education?: string[];
+  certifications?: string[];
+  resumeText?: string;
+}): {
+  needsExperienceReextract: boolean;
+  needsEducationReextract: boolean;
+  needsAnyNormalization: boolean;
+} {
+  const exp = Array.isArray(input.experience) ? input.experience : [];
+  const edu = Array.isArray(input.education) ? input.education : [];
+  const cert = Array.isArray(input.certifications) ? input.certifications : [];
+  const resume = (input.resumeText || '').trim();
+  const hasRichResume = resume.length >= 80;
+
+  const expStr = exp.join('\n');
+  const eduStr = edu.join('\n');
+
+  const hasDirtyExp =
+    exp.length === 0 ||
+    /\b(actualidad|presente)\s*\|\s*empresa del sector privado/i.test(expStr) ||
+    /actividades:\s*\/(?:\s|$|"|\|)/i.test(expStr) ||
+    /empresa\s+(corporativa\s*\/\s*servicios\s*ti|del\s+sector\s+privado)/i.test(expStr) ||
+    /trayectoria profesional consolidada/i.test(expStr) ||
+    /[•●▪]/u.test(expStr) ||
+    /facultad de estudios superiores/i.test(expStr) ||
+    /(202[3-9]|203\d)\s*[-–—]\s*(?:[a-záéíóú]+\s+)?(?:201\d|202[0-2])\b/i.test(expStr);
+
+  const hasDirtyEdu =
+    edu.length === 0 ||
+    /egrese de la carrera/i.test(eduStr) ||
+    (/universidad nacional aut[oó]noma de m[eé]xico/i.test(eduStr) && hasRichResume && !/\b(unam|aut[oó]noma de m[eé]xico)\b/i.test(resume)) ||
+    /universidad\s*\/\s*instituto\s+de\s+educaci[oó]n\s+superior/i.test(eduStr) ||
+    (/\b(analista|mexgas|urrea|s\.?a\.?\s*de\s*c\.?v\.?)\b/i.test(eduStr) && !/\b(licenciatura|ingenier[ií]a|universidad|instituto|tecnol[oó]gico|polit[eé]cnica)\b/i.test(eduStr));
+
+  const needsExperienceReextract = hasRichResume && hasDirtyExp;
+  const needsEducationReextract = hasRichResume && hasDirtyEdu;
+
+  const normExp = normalizeCanonicalExperience(exp);
+  const normEdu = normalizeCanonicalEducation(edu);
+  const normCert = normalizeCanonicalCertifications(cert);
+  const needsAnyNormalization =
+    needsExperienceReextract ||
+    needsEducationReextract ||
+    JSON.stringify(normExp) !== JSON.stringify(exp) ||
+    JSON.stringify(normEdu) !== JSON.stringify(edu) ||
+    JSON.stringify(normCert) !== JSON.stringify(cert);
+
+  return { needsExperienceReextract, needsEducationReextract, needsAnyNormalization };
 }

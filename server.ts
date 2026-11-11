@@ -42,7 +42,8 @@ import {
   normalizeCanonicalCertifications, 
   isLocationString, 
   stripBulletPoints,
-  cleanExecutiveDetails
+  cleanExecutiveDetails,
+  detectDegradedCvFields
 } from "./src/utils/canonicalCvNormalizer.js";
 
 dotenv.config();
@@ -615,15 +616,25 @@ async function recalibrateAllCandidateScores(client: pg.PoolClient) {
         parsedComp = typeof r.competencies === 'string' ? JSON.parse(r.competencies) : (r.competencies || {});
       } catch {}
 
-      const candObj = {
-        id: r.id,
+      const resolvedCv = resolveAndNormalizeCandidateCvProfile({
         name: cleanedName,
-        email: r.email || '',
         resumeText: r.resume_text || '',
         summary: r.summary || '',
         experience: Array.isArray(r.experience) ? r.experience : [],
         education: Array.isArray(r.education) ? r.education : [],
         certifications: Array.isArray(r.certifications) ? r.certifications : [],
+        fallbackRole: linkedVac?.title || ''
+      });
+
+      const candObj = {
+        id: r.id,
+        name: cleanedName,
+        email: r.email || '',
+        resumeText: r.resume_text || '',
+        summary: r.summary || resolvedCv.summary || '',
+        experience: resolvedCv.experience,
+        education: resolvedCv.education,
+        certifications: resolvedCv.certifications,
         competencies: parsedComp,
         detectedGuidanceLevel: r.detected_guidance_level || undefined
       };
@@ -650,9 +661,12 @@ async function recalibrateAllCandidateScores(client: pg.PoolClient) {
           initial_fit_score = $5,
           strengths = $6,
           growths = $7,
-          detected_guidance_level = $8
-        WHERE id = $9`,
-        [
+          detected_guidance_level = $8,
+          experience = $9,
+          education = $10,
+          certifications = $11
+        WHERE id = $12`,
+        sanitizeForPg([
           cleanedName,
           JSON.stringify(dynamicComp),
           analyticalSummary,
@@ -661,8 +675,11 @@ async function recalibrateAllCandidateScores(client: pg.PoolClient) {
           strictEval.strengths,
           strictEval.growths,
           guidance.candidate.level,
+          resolvedCv.experience,
+          resolvedCv.education,
+          resolvedCv.certifications,
           r.id
-        ]
+        ])
       );
       updatedCount++;
     }
@@ -2561,16 +2578,18 @@ app.post("/api/candidates", async (req, res) => {
     return res.status(400).json({ error: "id y name son obligatorios" });
   }
 
-  // Normalización canónica universal obligatoria antes de persistencia
-  if (c.experience && Array.isArray(c.experience)) {
-    c.experience = normalizeCanonicalExperience(c.experience);
-  }
-  if (c.education && Array.isArray(c.education)) {
-    c.education = normalizeCanonicalEducation(c.education);
-  }
-  if (c.certifications && Array.isArray(c.certifications)) {
-    c.certifications = normalizeCanonicalCertifications(c.certifications);
-  }
+  // Resolución y normalización canónica universal obligatoria antes de persistencia
+  const resolvedCv = resolveAndNormalizeCandidateCvProfile({
+    name: c.name,
+    resumeText: c.resumeText || '',
+    summary: c.summary || '',
+    experience: c.experience,
+    education: c.education,
+    certifications: c.certifications
+  });
+  c.experience = resolvedCv.experience;
+  c.education = resolvedCv.education;
+  c.certifications = resolvedCv.certifications;
 
   if (useDbFallback) {
     mockCandidates = mockCandidates.filter(item => item.id !== c.id);
@@ -2689,11 +2708,23 @@ app.post("/api/public/applications", publicApplicationLimiter, async (req, res) 
   const screeningQuestions = Array.isArray(b.screeningQuestions)
     ? b.screeningQuestions.slice(0, 20).map((q: any, i: number) => ({ id: i + 1, question: String(q.question || '').slice(0, 1000), answer: String(q.answer || '').slice(0, 5000) }))
     : [];
+  const rawResumeText = String(b.resumeText || '').slice(0, 200000);
+  const resolvedCv = resolveAndNormalizeCandidateCvProfile({
+    name,
+    resumeText: rawResumeText,
+    summary: String(b.summary || '').slice(0, 5000),
+    experience: b.experience,
+    education: b.education,
+    certifications: b.certifications
+  });
   const candidate = {
-    id, name, email, phone: String(b.phone || '').slice(0, 50), resumeText: String(b.resumeText || '').slice(0, 200000),
+    id, name, email, phone: String(b.phone || '').slice(0, 50), resumeText: rawResumeText,
     stage: 'Filtrado', competencies: typeof b.competencies === 'object' && b.competencies ? b.competencies : {},
     fitScore: Math.max(0, Math.min(100, Number(b.fitScore) || 0)), summary: String(b.summary || '').slice(0, 5000),
     strengths: toTextArray(b.strengths) || [], growths: toTextArray(b.growths) || [],
+    experience: resolvedCv.experience,
+    education: resolvedCv.education,
+    certifications: resolvedCv.certifications,
     doubleCheckReport: String(b.doubleCheckReport || '').slice(0, 10000), channel: 'Otros', vacancyId, screeningQuestions,
     history: [{ timestamp: new Date().toISOString(), stage: 'Filtrado', user: 'Portal de Empleos' }]
   };
@@ -2708,10 +2739,10 @@ app.post("/api/public/applications", publicApplicationLimiter, async (req, res) 
     if (!vac.rowCount) return res.status(400).json({ error: "La vacante ya no está disponible." });
     const appParams = sanitizeForPg([id, name, email, candidate.phone, candidate.resumeText, candidate.stage, JSON.stringify(candidate.competencies), candidate.fitScore,
         candidate.summary, candidate.strengths, candidate.growths, candidate.channel, vacancyId, JSON.stringify(screeningQuestions),
-        candidate.doubleCheckReport, JSON.stringify(candidate.history)]);
+        candidate.doubleCheckReport, JSON.stringify(candidate.history), candidate.experience, candidate.education, candidate.certifications]);
     await pool.query(`
-      INSERT INTO candidates (id, name, email, phone, resume_text, stage, competencies, fit_score, initial_fit_score, summary, strengths, growths, channel, vacancy_id, screening_questions, double_check_report, history, updated_at)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8, $9, $10, $11, $12, $13, $14, $15, $16, CURRENT_TIMESTAMP)
+      INSERT INTO candidates (id, name, email, phone, resume_text, stage, competencies, fit_score, initial_fit_score, summary, strengths, growths, channel, vacancy_id, screening_questions, double_check_report, history, experience, education, certifications, updated_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, CURRENT_TIMESTAMP)
     `, appParams);
     notifyN8nCandidateChange(candidate, 'portal_application');
     res.json({ success: true, id });
@@ -2806,6 +2837,36 @@ app.post("/api/admin/reset-double-check", authenticateToken(useDbFallback ? null
   } catch (err) {
     console.error("[Reset Double Check] Error:", err);
     return res.status(500).json({ error: "Error resetting double check scores in DB" });
+  }
+});
+
+app.post("/api/candidates/rehydrate-all", authenticateToken(useDbFallback ? null : pool), requireRole(['admin']), async (req, res) => {
+  if (useDbFallback) {
+    mockCandidates = mockCandidates.map(c => {
+      const resolved = resolveAndNormalizeCandidateCvProfile({
+        name: c.name,
+        resumeText: c.resumeText || '',
+        summary: c.summary || '',
+        experience: c.experience,
+        education: c.education,
+        certifications: c.certifications
+      });
+      return { ...c, ...resolved };
+    });
+    saveDiskCandidates(mockCandidates);
+    return res.json({ success: true, processed: mockCandidates.length, mode: 'memory' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await recalibrateAllCandidateScores(client);
+    const countRes = await client.query("SELECT COUNT(*)::int AS total FROM candidates");
+    return res.json({ success: true, processed: countRes.rows[0]?.total || 0, mode: 'postgres' });
+  } catch (err: any) {
+    console.error("[Rehydrate All] Error:", err);
+    return res.status(500).json({ error: "Error rehidratando candidatos en BD", detail: err.code });
+  } finally {
+    client.release();
   }
 });
 
@@ -2936,6 +2997,17 @@ app.patch("/api/candidates/:id", async (req, res) => {
     }
     oldVacId = mockCandidates[idx].vacancyId;
     mockCandidates[idx] = { ...mockCandidates[idx], ...req.body };
+    const resolvedMockCv = resolveAndNormalizeCandidateCvProfile({
+      name: mockCandidates[idx].name,
+      resumeText: req.body.resumeText || mockCandidates[idx].resumeText || '',
+      summary: mockCandidates[idx].summary || '',
+      experience: experience !== undefined ? safeExperience : mockCandidates[idx].experience,
+      education: education !== undefined ? safeEducation : mockCandidates[idx].education,
+      certifications: certifications !== undefined ? safeCertifications : mockCandidates[idx].certifications
+    });
+    mockCandidates[idx].experience = resolvedMockCv.experience;
+    mockCandidates[idx].education = resolvedMockCv.education;
+    mockCandidates[idx].certifications = resolvedMockCv.certifications;
     const targetVacId = vacancyId || mockCandidates[idx].vacancyId;
     
     if (targetVacId && (targetVacId !== oldVacId || req.body.forceRegenerate)) {
@@ -2999,6 +3071,28 @@ app.patch("/api/candidates/:id", async (req, res) => {
       }
     }
 
+    const effectiveResume = typeof resumeText === 'string' ? resumeText : (origCandidate.resume_text || '');
+    const patchHealth = detectDegradedCvFields({
+      experience: experience !== undefined ? safeExperience : (Array.isArray(origCandidate.experience) ? origCandidate.experience : []),
+      education: education !== undefined ? safeEducation : (Array.isArray(origCandidate.education) ? origCandidate.education : []),
+      certifications: certifications !== undefined ? safeCertifications : (Array.isArray(origCandidate.certifications) ? origCandidate.certifications : []),
+      resumeText: effectiveResume
+    });
+    const autoResolvedCv = (resumeText !== undefined || patchHealth.needsAnyNormalization)
+      ? resolveAndNormalizeCandidateCvProfile({
+          name: name || origCandidate.name || '',
+          resumeText: effectiveResume,
+          summary: summary || origCandidate.summary || '',
+          experience: experience !== undefined ? safeExperience : origCandidate.experience,
+          education: education !== undefined ? safeEducation : origCandidate.education,
+          certifications: certifications !== undefined ? safeCertifications : origCandidate.certifications
+        })
+      : null;
+
+    const finalExperienceParam = autoResolvedCv ? autoResolvedCv.experience : (experience !== undefined ? (safeExperience || null) : null);
+    const finalEducationParam = autoResolvedCv ? autoResolvedCv.education : (education !== undefined ? (safeEducation || null) : null);
+    const finalCertificationsParam = autoResolvedCv ? autoResolvedCv.certifications : (certifications !== undefined ? (safeCertifications || null) : null);
+
     const result = await pool.query(
       `UPDATE candidates SET 
         name = COALESCE($1, name),
@@ -3030,7 +3124,7 @@ app.patch("/api/candidates/:id", async (req, res) => {
         suggested_time = COALESCE($27, suggested_time),
         updated_at = CURRENT_TIMESTAMP
       WHERE id = $28 RETURNING *`,
-      [
+      sanitizeForPg([
         name !== undefined ? name : null,
         email !== undefined ? email : null,
         phone !== undefined ? phone : null,
@@ -3049,9 +3143,9 @@ app.patch("/api/candidates/:id", async (req, res) => {
         interviewSpeech !== undefined ? interviewSpeech : null,
         screeningQuestions !== undefined ? JSON.stringify(screeningQuestions) : null,
         recommendedQuestions !== undefined ? recommendedQuestions : null,
-        experience !== undefined ? (safeExperience || null) : null,
-        education !== undefined ? (safeEducation || null) : null,
-        certifications !== undefined ? (safeCertifications || null) : null,
+        finalExperienceParam,
+        finalEducationParam,
+        finalCertificationsParam,
         comments !== undefined ? comments : null,
         resumeText !== undefined ? resumeText : null,
         detectedGuidanceLevel !== undefined ? detectedGuidanceLevel : null,
@@ -3059,7 +3153,7 @@ app.patch("/api/candidates/:id", async (req, res) => {
         toTextArray(tags),
         suggestedTime !== undefined ? suggestedTime : null,
         id
-      ]
+      ])
     );
 
     let updatedCandidate = result.rows[0];
@@ -3185,14 +3279,24 @@ Por favor, como experto en Atracción de Capital Humano, realiza un filtrado y a
           `${id}|${targetVacancy.title}|${Date.now()}`
         );
 
+        const resolvedForVac = resolveAndNormalizeCandidateCvProfile({
+          name: updatedCandidate.name,
+          resumeText: resumeTextToUse,
+          summary: evalResult.summary || updatedCandidate.summary || origCandidate.summary || '',
+          experience: experience !== undefined ? experience : updatedCandidate.experience,
+          education: education !== undefined ? education : updatedCandidate.education,
+          certifications: certifications !== undefined ? certifications : updatedCandidate.certifications,
+          fallbackRole: targetVacancy.title
+        });
+
         const isNewVac = (targetVacId !== oldVacId);
         const candForStrict = {
           name: cleanCandidateName(updatedCandidate.name, resumeTextToUse, updatedCandidate.email),
           resumeText: resumeTextToUse,
           summary: evalResult.summary || updatedCandidate.summary || origCandidate.summary || '',
-          experience: updatedCandidate.experience || [],
-          education: updatedCandidate.education || [],
-          certifications: updatedCandidate.certifications || []
+          experience: resolvedForVac.experience,
+          education: resolvedForVac.education,
+          certifications: resolvedForVac.certifications
         };
 
         // Calibración determinista estricta contra la vacante asignada (100% invariante con el optimizador cruzado)
@@ -3218,9 +3322,12 @@ Por favor, como experto en Atracción de Capital Humano, realiza un filtrado y a
             recommended_questions = $7,
             suggested_time = $8,
             screening_questions = $9,
-            detected_guidance_level = $10
-          WHERE id = $11 RETURNING *`,
-          [
+            detected_guidance_level = $10,
+            experience = $11,
+            education = $12,
+            certifications = $13
+          WHERE id = $14 RETURNING *`,
+          sanitizeForPg([
             JSON.stringify(dynamicCompetencies),
             calibratedScore,
             newInitialFit,
@@ -3231,8 +3338,11 @@ Por favor, como experto en Atracción de Capital Humano, realiza un filtrado y a
             "", // Se elimina sugerencia de hora simulada
             JSON.stringify(buildScreeningQuestions(evalResult.recommendedQuestions || [])),
             guidanceInfo.candidate.level,
+            resolvedForVac.experience,
+            resolvedForVac.education,
+            resolvedForVac.certifications,
             id
-          ]
+          ])
         );
         if (updateEval.rowCount && updateEval.rowCount > 0) {
           updatedCandidate = updateEval.rows[0];
@@ -4102,22 +4212,41 @@ export function extractStructuredCvDataFromText(resumeText: string, fallbackName
       continue;
     }
 
-    // Header trigger check (incluye cabeceras con espaciado como "E x p e r i e n c i a   L a b o r a l")
-    if (cleanL.length < 50 && (
+    // Header trigger check (incluye cabeceras en dos columnas "QUIEN SOY\tEXPERIENCIA PROFESIONAL", espaciadas o extendidas)
+    const headerSegments = line.split(/\t|\s{3,}/).map(seg => seg.replace(/^[•\-\*\d\.\)\s✓●:]+|[:\s]+$/g, '').trim()).filter(Boolean);
+    const hasExpSegment = headerSegments.some(seg => {
+      const segLow = seg.toLowerCase();
+      const segCollapsed = segLow.replace(/\s+/g, '');
+      return seg.length < 55 && (
+        [
+          'experiencialaboral', 'experienciaprofesional', 'experienciaprofesionalyaplicada',
+          'trayectorialaboral', 'trayectoriaprofesional', 'workexperience', 'experiencia',
+          'experience', 'professionalexperience', 'professionalworkexperience',
+          'employmenthistory', 'workhistory', 'relevantexperience', 'experienciarelevante',
+          'historiallaboral'
+        ].includes(segCollapsed) ||
+        segLow.startsWith('experiencia profesional') || segLow.startsWith('experiencia laboral') ||
+        segLow.startsWith('professional experience') || segLow.startsWith('work experience') ||
+        segLow.startsWith('professional work experience') || segLow.startsWith('experiencia relevante')
+      );
+    });
+    if (hasExpSegment || (cleanL.length < 55 && (
       [
-        'experiencialaboral', 'experienciaprofesional', 'trayectorialaboral',
-        'workexperience', 'experiencia', 'experience', 'professionalexperience',
-        'professionalworkexperience', 'employmenthistory', 'workhistory', 'relevantexperience',
-        'experienciarelevante', 'historiallaboral'
+        'experiencialaboral', 'experienciaprofesional', 'experienciaprofesionalyaplicada',
+        'trayectorialaboral', 'trayectoriaprofesional', 'workexperience', 'experiencia',
+        'experience', 'professionalexperience', 'professionalworkexperience',
+        'employmenthistory', 'workhistory', 'relevantexperience', 'experienciarelevante',
+        'historiallaboral'
       ].includes(collapsed) ||
+      cleanLow.startsWith('experiencia profesional') || cleanLow.startsWith('experiencia laboral') ||
       cleanLow.startsWith('professional experience') || cleanLow.startsWith('work experience') ||
       cleanLow.startsWith('professional work experience') || cleanLow.startsWith('experiencia relevante')
-    )) {
+    ))) {
       inExp = true;
       continue;
     }
 
-    if (inExp && cleanL.length < 35 && (
+    if (inExp && experience.length > 0 && cleanL.length < 35 && (
       sectionBreakRegex.test(cleanLow) ||
       ['educacion', 'educación', 'formacionacademica', 'formaciónacadémica', 'estudios', 'certificaciones'].includes(collapsed)
     )) {
@@ -4237,9 +4366,59 @@ export function extractStructuredCvDataFromText(resumeText: string, fallbackName
       }
     }
 
+    // Renglón aislado con SOLO rango de fechas (ej: "Junio 2023–Actualidad"), seguido de "Puesto • Empresa" en i+1
+    const standaloneDateRangeMatch = cleanL.match(/^(?:(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|ene|feb|mar|abr|may|jun|jul|ago|sep|oct|nov|dic)[a-záéíóú]*\.?\s*(?:de\s+)?)?(?:19\d{2}|20\d{2}|\d{1,2}\/\d{4})\s*[-–—a]+\s*(?:(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|ene|feb|mar|abr|may|jun|jul|ago|sep|oct|nov|dic)[a-záéíóú]*\.?\s*(?:de\s+)?)?(?:19\d{2}|20\d{2}|\d{1,2}\/\d{4}|actual|actualidad|present|presente|fecha)\s*$/i);
+    if (standaloneDateRangeMatch && cleanL.length < 55 && !roleKeywordsRegex.test(cleanL)) {
+      commitJob();
+      currentPeriod = cleanL;
+      if (i + 1 < lines.length) {
+        const next1 = lines[i + 1].replace(/^[•\-\*\d\.\)\s✓●]+/, '').trim();
+        if (next1.length > 3 && next1.length < 130 && !/^(educaci[oó]n|certificac|habilidades)/i.test(next1)) {
+          const splitByBulletOrPipe = next1.split(/[•|]/).map(p => p.trim()).filter(Boolean);
+          const parts = splitByBulletOrPipe.length >= 2
+            ? splitByBulletOrPipe
+            : next1.split(/\s+[–—-]\s+/).map(p => p.trim()).filter(Boolean);
+          if (parts.length >= 2) {
+            const validParts = parts.filter(p => !isLocationString(p));
+            if (validParts.length >= 2) {
+              if (roleKeywordsRegex.test(validParts[0])) {
+                currentRole = validParts[0];
+                currentCompany = validParts[1];
+              } else {
+                currentCompany = validParts[0];
+                currentRole = validParts[1];
+              }
+            } else if (validParts.length === 1) {
+              if (roleKeywordsRegex.test(validParts[0])) {
+                currentRole = validParts[0];
+              } else {
+                currentCompany = validParts[0];
+              }
+            }
+            i++;
+          } else if (next1.length < 85 && !next1.endsWith('.')) {
+            if (roleKeywordsRegex.test(next1)) {
+              currentRole = next1;
+              if (i + 2 < lines.length && lines[i + 2].trim().length < 80 && !dateRegex.test(lines[i + 2]) && !/^(●|•|\-)/.test(lines[i + 2].trim())) {
+                currentCompany = lines[i + 2].replace(/^[•\-\*\d\.\)\s✓●]+/, '').trim();
+                i += 2;
+              } else {
+                i++;
+              }
+            } else {
+              currentCompany = next1;
+              i++;
+            }
+          }
+        }
+      }
+      continue;
+    }
+
     // Formato con fecha al inicio: "Fecha \t Puesto, Empresa" o "Fecha \t Empresa | Puesto"
-    const dateFirstMatch = cleanL.match(/^([a-záéíóú0-9\s–—\-\.\/]+(?:20\d{2}|19\d{2}|actual|presente))\s*[\t\-\–\|]\s*(.+)$/i);
-    if (dateFirstMatch && cleanL.length < 110) {
+    const dateFirstMatch = cleanL.match(/^([a-záéíóú0-9\s–—\-\.\/]+(?:20\d{2}|19\d{2}|actual|presente))\s*[\t\|]\s*(.+)$/i)
+      || cleanL.match(/^((?:(?:ene|feb|mar|abr|may|jun|jul|ago|sep|oct|nov|dic|jan|apr|aug|dec)[a-z]*\s+)?(?:19\d{2}|20\d{2})\s*[-–—]\s*(?:(?:ene|feb|mar|abr|may|jun|jul|ago|sep|oct|nov|dic|jan|apr|aug|dec)[a-z]*\s+)?(?:19\d{2}|20\d{2}|actual|actualidad|present|presente))\s+[-–—\|]?\s*(.+)$/i);
+    if (dateFirstMatch && cleanL.length < 130 && !/^(?:actual|actualidad|present|presente|fecha)$/i.test(dateFirstMatch[2].trim())) {
       commitJob();
       currentPeriod = dateFirstMatch[1].trim();
       const rest = dateFirstMatch[2].trim();
@@ -4355,6 +4534,51 @@ export function extractStructuredCvDataFromText(resumeText: string, fallbackName
 
   commitJob();
 
+  // Rescate heurístico sin cabecera de sección si el texto tiene empleos con fecha y puesto/separador
+  if (experience.length === 0) {
+    for (let i = 0; i < lines.length && experience.length < 3; i++) {
+      const rawLine = lines[i];
+      const cleanL = rawLine.replace(/^[•\-\*\d\.\)\s✓●]+/, '').trim();
+      if (cleanL.length < 10 || cleanL.length > 135) continue;
+      if (/\b(universidad|instituto tecnol[oó]gico|facultad|licenciatura|ingenier[ií]a en|bachillerato)\b/i.test(cleanL) && !roleKeywordsRegex.test(cleanL)) continue;
+      const pMatch = cleanL.match(dateRegex);
+      if (!pMatch) continue;
+      const period = pMatch[0].trim();
+      const noDate = cleanL.replace(period, '').replace(/^[•*()\[\]\s\t–—,.\-|]+|[•*()\[\]\s\t–—,.\-|]+$/g, '').trim();
+      if (noDate.length < 6) continue;
+      const segs = noDate.split(/\t|\||•|\s+[–—-]\s+/).map(s => s.trim()).filter(Boolean).filter(s => !isLocationString(s));
+      if (segs.length >= 2) {
+        const r = roleKeywordsRegex.test(segs[0]) ? segs[0] : (roleKeywordsRegex.test(segs[1]) ? segs[1] : segs[0]);
+        const c = r === segs[0] ? segs[1] : segs[0];
+        experience.push(`${r} | ${c} | ${period}`);
+      } else if (roleKeywordsRegex.test(noDate)) {
+        experience.push(`${noDate} | Empresa del Sector Privado | ${period}`);
+      }
+    }
+    // Pares consecutivos sin fecha en el mismo renglón: Empresa en i, Puesto en i+1 (típico en CVs a 2 columnas)
+    if (experience.length === 0) {
+      for (let i = 0; i < lines.length - 1 && experience.length < 3; i++) {
+        const compCand = lines[i].replace(/^[•\-\*\d\.\)\s✓●]+/, '').trim();
+        const roleCand = lines[i + 1].replace(/^[•\-\*\d\.\)\s✓●]+/, '').trim();
+        if (
+          compCand.length >= 3 && compCand.length <= 55 &&
+          roleCand.length >= 5 && roleCand.length <= 65 &&
+          !/^[●•\-*]/.test(lines[i].trim()) && !/^[●•\-*]/.test(lines[i + 1].trim()) &&
+          !compCand.includes(':') && !isLocationString(compCand) &&
+          !/^(quien soy|estudios|idiomas|referencias|programas|habilidades|experiencia|educaci[oó]n|t[ií]tulo)/i.test(compCand) &&
+          roleKeywordsRegex.test(roleCand) &&
+          !/\b(universidad|instituto|licenciatura|ingenier[ií]a|egresado|t[ií]tulo)\b/i.test(compCand + ' ' + roleCand)
+        ) {
+          const item = `${roleCand} | ${compCand} | Periodo profesional`;
+          if (!experience.some(e => e.toLowerCase() === item.toLowerCase())) {
+            experience.push(item);
+          }
+          i++;
+        }
+      }
+    }
+  }
+
   // 3. Education Extraction
   const education: string[] = [];
   let inEdu = false;
@@ -4362,22 +4586,67 @@ export function extractStructuredCvDataFromText(resumeText: string, fallbackName
 
   for (const line of lines) {
     const l = line.toLowerCase();
-    if (line.length < 35 && (l === 'educación' || l === 'estudios' || l === 'formación académica' || l === 'formacion' || l === 'education')) {
+    const cleanLine = line.replace(/^[•\-\*\d\.\)\s✓●]+/, '').trim();
+    const eduHeaderSegs = line.split(/\t|\s{3,}/).map(s => s.replace(/^[•\-\*\d\.\)\s✓●:]+|[:\s]+$/g, '').trim()).filter(Boolean);
+    const matchesEduHeader = eduHeaderSegs.some(seg => {
+      const segLow = seg.toLowerCase();
+      const segCol = segLow.replace(/\s+/g, '');
+      return seg.length < 45 && (
+        ['educacion', 'educación', 'estudios', 'formacionacademica', 'formaciónacadémica', 'formacion', 'formación', 'education', 'academicbackground', 'escolaridad', 'preparacionacademica', 'preparaciónacadémica'].includes(segCol) ||
+        segLow.startsWith('formación académica') || segLow.startsWith('educación:')
+      );
+    });
+    if (matchesEduHeader || (cleanLine.length < 40 && (l === 'educación' || l === 'educacion' || l === 'estudios' || l === 'formación académica' || l === 'formacion academica' || l === 'formacion' || l === 'formación' || l === 'education' || l === 'escolaridad'))) {
       inEdu = true;
       continue;
     }
-    if (inEdu && line.length < 35 && (l === 'certificaciones' || l === 'cursos' || l === 'idiomas' || l === 'habilidades' || l === 'contacto')) {
+    if (inEdu && cleanLine.length < 40 && /^(certificaciones|cursos|idiomas|habilidades|contacto|experiencia|referencias)\b/i.test(cleanLine)) {
       break;
     }
     if (!inEdu) continue;
 
-    if (l.startsWith('nacimiento') || l.startsWith('nacionalidad') || l.startsWith('estado civil') || l.startsWith('dirección') || l.startsWith('email') || l.startsWith('teléfono') || l.includes('of 3')) {
+    if (l.startsWith('nacimiento') || l.startsWith('nacionalidad') || l.startsWith('estado civil') || l.startsWith('dirección') || l.startsWith('email') || l.startsWith('teléfono') || l.includes('of 3') || l.includes('of 2')) {
+      continue;
+    }
+    // Evitar fuga de empleos y listas de tareas en CVs de dos columnas dentro de educación
+    const hasAcademicSignal = /\b(licenciatura|ingenier[ií]a|ingeniero|maestr[ií]a|master|mba|doctorado|t[eé]cnico|bachillerato|t[ií]tulo|certificado|universidad|instituto|tecnol[oó]gico|facultad|escuela|unam|ipn|uam|itesm|uvm|unitec|udg|uanl|buap|cecyte|conalep)\b/i.test(cleanLine);
+    const hasWorkSignal = /\b(empresa|s\.?a\.?\s*de\s*c\.?v\.?|consultor|analista|desarrollador|gerente|actualidad|presente|tareas realizadas|monitoreo|administraci[oó]n de usuarios|solman|service\s*now)\b/i.test(cleanLine) || /\t/.test(line) || /^[•●▪]/.test(line.trim());
+    if ((hasWorkSignal || eduLines.length === 0) && !hasAcademicSignal) {
       continue;
     }
 
-    if (line.length > 5 && eduLines.length < 3) {
-      eduLines.push(line.replace(/^[•\-\*\d\.\)\s]+/, '').trim());
+    if (cleanLine.length > 3 && eduLines.length < 4) {
+      // Unir continuación de carrera en renglón envuelto (ej: "Ingeniería en Sistemas" + "Computacionales")
+      if (eduLines.length === 1 && !hasAcademicSignal && cleanLine.length < 32 && !/\d{4}/.test(cleanLine) && /^[a-záéíóúñ\s]+$/i.test(cleanLine)) {
+        eduLines[0] = `${eduLines[0]} ${cleanLine}`.replace(/\s{2,}/g, ' ').trim();
+      } else if (eduLines.length < 3) {
+        eduLines.push(cleanLine);
+      }
     }
+  }
+
+  // Rescate académico sin cabecera explícita si el bloque de educación quedó vacío
+  if (eduLines.length === 0) {
+    let foundDeg = '';
+    let foundInst = '';
+    let foundPeriod = '';
+    for (const line of lines) {
+      const cleanLine = line.replace(/^[•\-\*\d\.\)\s✓●]+/, '').trim();
+      if (cleanLine.length < 6 || cleanLine.length > 140) continue;
+      if (!foundDeg && /\b(licenciatura|ingenier[ií]a|maestr[ií]a|posgrado|bachelor|master|mba|doctorado|t[eé]cnico superior)\b/i.test(cleanLine)) {
+        foundDeg = cleanLine;
+        const pMatch = cleanLine.match(/\b(19\d{2}|20\d{2})(?:\s*[-–—]\s*(?:19\d{2}|20\d{2}|actual|actualidad))?\b/i);
+        if (pMatch) foundPeriod = pMatch[0];
+      }
+      if (!foundInst && /\b(universidad|instituto tecnol[oó]gico|tecnol[oó]gico de|itesm|unam|ipn|uam|uvm|unitec|udg|uanl|buap|poli|facultad)\b/i.test(cleanLine)) {
+        foundInst = cleanLine;
+        const pMatch = cleanLine.match(/\b(19\d{2}|20\d{2})(?:\s*[-–—]\s*(?:19\d{2}|20\d{2}|actual|actualidad))?\b/i);
+        if (pMatch && !foundPeriod) foundPeriod = pMatch[0];
+      }
+    }
+    if (foundDeg) eduLines.push(foundDeg);
+    if (foundInst && foundInst !== foundDeg) eduLines.push(foundInst);
+    if (foundPeriod) eduLines.push(foundPeriod);
   }
 
   if (eduLines.length > 0) {
@@ -4403,7 +4672,7 @@ export function extractStructuredCvDataFromText(resumeText: string, fallbackName
     }
     education.push(`${degree} | ${inst} | ${period}`);
   } else {
-    education.push(`Licenciatura / Ingeniería en Sistemas o Formación Afín | Universidad Nacional Autónoma de México (UNAM) | 2014 - 2018`);
+    education.push(`Formación Profesional / Superior | Institución Educativa (por validar en entrevista) | Periodo de estudios`);
   }
 
   // 4. Certifications Extraction
@@ -4456,6 +4725,89 @@ export function extractStructuredCvDataFromText(resumeText: string, fallbackName
     ...normalizedCv,
     summary: analyticalSummary
   };
+}
+
+/**
+ * Pipeline unificado y autoritativo para resolver, rescatar y normalizar
+ * experiencia, educación y certificaciones tanto en ingestión nueva como en migración histórica.
+ */
+function resolveAndNormalizeCandidateCvProfile(input: {
+  name?: string;
+  resumeText?: string;
+  summary?: string;
+  experience?: unknown;
+  education?: unknown;
+  certifications?: unknown;
+  fallbackRole?: string;
+}) {
+  const resumeText = typeof input.resumeText === 'string' ? input.resumeText : '';
+  const rawExp = toTextArray(input.experience) || [];
+  const rawEdu = toTextArray(input.education) || [];
+  const rawCert = toTextArray(input.certifications) || [];
+
+  const health = detectDegradedCvFields({
+    experience: rawExp,
+    education: rawEdu,
+    certifications: rawCert,
+    resumeText
+  });
+
+  let extracted: { experience: string[]; education: string[]; certifications: string[]; summary: string } | null = null;
+  const ensureExtracted = () => {
+    if (!extracted && resumeText.trim().length >= 80) {
+      extracted = extractStructuredCvDataFromText(resumeText, input.name || 'Candidato', input.fallbackRole || '');
+    }
+    return extracted;
+  };
+
+  let expSource = rawExp;
+  if (health.needsExperienceReextract) {
+    const ext = ensureExtracted();
+    if (ext && Array.isArray(ext.experience) && ext.experience.length > 0) {
+      const extClean = normalizeCanonicalExperience(ext.experience);
+      if (extClean.length > 0 && !detectDegradedCvFields({ experience: extClean, resumeText }).needsExperienceReextract) {
+        expSource = extClean;
+      } else if (rawExp.length === 0) {
+        expSource = extClean;
+      }
+    }
+  }
+
+  let eduSource = rawEdu;
+  if (health.needsEducationReextract) {
+    const ext = ensureExtracted();
+    if (ext && Array.isArray(ext.education) && ext.education.length > 0) {
+      const extClean = normalizeCanonicalEducation(ext.education);
+      if (extClean.length > 0) {
+        eduSource = extClean;
+      }
+    }
+  }
+
+  let certSource = rawCert;
+  if (certSource.length === 0 && resumeText.trim().length >= 80) {
+    const ext = ensureExtracted();
+    if (ext && Array.isArray(ext.certifications) && ext.certifications.length > 0) {
+      certSource = ext.certifications;
+    }
+  }
+
+  const normalized = validateAndNormalizeCanonicalCv({
+    summary: typeof input.summary === 'string' ? input.summary : '',
+    experience: expSource,
+    education: eduSource,
+    certifications: certSource
+  });
+
+  if (resumeText.trim().length >= 80 && !/\b(unam|aut[oó]noma de m[eé]xico)\b/i.test(resumeText)) {
+    normalized.education = normalized.education.map(ed =>
+      /universidad nacional aut[oó]noma de m[eé]xico/i.test(ed)
+        ? ed.replace(/Universidad Nacional Aut[oó]noma de M[eé]xico\s*(?:\(UNAM\))?/gi, 'Universidad / Instituto de Educación Superior')
+        : ed
+    );
+  }
+
+  return normalized;
 }
 
 function runLocalHeuristicAnalysis(name: string, resumeText: string, candidateRole: string, targetVacancy: any) {
@@ -4735,13 +5087,26 @@ IMPORTANTE: El sistema ha aprendido de las decisiones anteriores de contratació
     const aiResult = JSON.parse(cleanedText);
     aiResult.suggestedTime = ""; // Se erradica horario simulado
 
+    const resolvedCv = resolveAndNormalizeCandidateCvProfile({
+      name: cleanCandidateName(name || '', resumeText),
+      resumeText,
+      summary: aiResult.summary,
+      experience: aiResult.experience,
+      education: aiResult.education,
+      certifications: aiResult.certifications,
+      fallbackRole: effectiveVacancy?.title || candidateRole
+    });
+    aiResult.experience = resolvedCv.experience;
+    aiResult.education = resolvedCv.education;
+    aiResult.certifications = resolvedCv.certifications;
+
     const candForCalibration = {
       name: cleanCandidateName(name || '', resumeText),
       resumeText,
       summary: aiResult.summary,
-      experience: aiResult.experience || [],
-      education: aiResult.education || [],
-      certifications: aiResult.certifications || [],
+      experience: resolvedCv.experience,
+      education: resolvedCv.education,
+      certifications: resolvedCv.certifications,
       competencies: aiResult.competencies || {}
     };
 
